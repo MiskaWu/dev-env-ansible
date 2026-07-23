@@ -48,15 +48,32 @@
     mode: "0755"
   when: compose_shim
 
-# scope: user 的 systemd 需要 XDG_RUNTIME_DIR —— 非互動 SSH 未必有，明確給。
-- name: Enable rootless podman.socket
-  ansible.builtin.systemd_service:
-    name: podman.socket
-    enabled: true
-    state: started
-    scope: user
+# 用「建 enable symlink」啟用 podman.socket，而不是 systemctl --user enable。
+# 為什麼：WSL 上 systemd 259 的 user session 冷啟動有 race，`systemctl --user` 常
+# 連不上 user bus（Failed to connect to user scope bus）而讓整個 play abort。
+# enable 的本質就是在 sockets.target.wants 建一個指向 unit 的 symlink——不需要 live
+# 的 user manager。enable 後，下次乾淨 session（distro 重啟）sockets.target 就會拉起它。
+# 啟動則 best-effort，race 擋住也不致命。
+- name: Ensure user systemd sockets.target.wants dir
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.config/systemd/user/sockets.target.wants"
+    state: directory
+    mode: "0755"
+
+- name: Enable rootless podman.socket (symlink; no running user manager needed)
+  ansible.builtin.file:
+    src: /usr/lib/systemd/user/podman.socket
+    dest: "{{ ansible_facts.env.HOME }}/.config/systemd/user/sockets.target.wants/podman.socket"
+    state: link
+
+- name: Start podman.socket now (best-effort; WSL cold-start race may defer to next login)
+  ansible.builtin.command: systemctl --user start podman.socket
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ login_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ login_uid }}/bus"
+  register: _podman_sock
+  changed_when: _podman_sock.rc == 0
+  failed_when: false
 
 # 環境變數放 ~/.profile（.bashrc 對非互動 shell 提早 return，讀不到）。
 - name: DOCKER_HOST in ~/.profile
