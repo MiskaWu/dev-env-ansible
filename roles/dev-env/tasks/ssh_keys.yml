@@ -1,0 +1,17 @@
+---
+- name: Ensure ~/.ssh exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.ssh"
+    state: directory
+    mode: "0700"
+
+# 每個 scope 一把 ed25519；creates 保證存在就不重生。
+# 註解 = <comment>-<scope> <建置日期>，如 miskawu@baasgames-dev-github 2026-07-23
+- name: Generate ed25519 key per scope
+  ansible.builtin.command:
+    cmd: >-
+      ssh-keygen -t ed25519 -N ''
+      -C "{{ ssh_key_comment }}-{{ item }} {{ ansible_facts.date_time.date }}"
+      -f {{ ansible_facts.env.HOME }}/.ssh/id_ed25519_{{ ssh_key_tag }}_{{ item }}
+    creates: "{{ ansible_facts.env.HOME }}/.ssh/id_ed25519_{{ ssh_key_tag }}_{{ item }}"
+  loop: "{{ ssh_key_scopes }}"

@@ -1,0 +1,6 @@
+---
+- name: Provision Linux dev environment
+  hosts: all
+  gather_facts: true
+  roles:
+    - dev-env

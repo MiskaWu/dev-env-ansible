@@ -1,0 +1,22 @@
+---
+# 這些是預設值，可在 inventory / group_vars / host_vars 覆蓋。
+# 對應原 wsl-bootstrap 的 config.ps1 開關。
+
+# ---- 容器 runtime ----
+container_runtime: podman          # 目前 role 只實作 podman 路徑
+compose_shim: true                 # 裝 docker-compose 二進位 + DOCKER_HOST
+
+# ---- Go（寫死必裝，只選版本）----
+go_version: latest                 # 'latest' 查 go.dev，或 pin 如 '1.26.5'
+
+# ---- 可選 toolchain ----
+install_node: false
+node_version: lts                  # nvm 認得的字串：'lts' / '22' / '22.11.0'
+install_python: true               # uv
+install_clients: true              # psql, redis-cli, nats
+
+# ---- SSH key ----
+generate_ssh_keys: true
+ssh_key_tag: "{{ inventory_hostname }}"   # 檔名前綴 id_ed25519_<tag>_<scope>
+ssh_key_scopes: [github, gitlab]
+ssh_key_comment: "miskawu@baasgames-dev"  # phase3 會接上 -<scope> 與建置日期

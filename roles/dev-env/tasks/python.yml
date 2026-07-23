@@ -1,0 +1,11 @@
+---
+- name: Install uv
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
+    creates: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
+
+- name: ~/.local/bin on PATH in ~/.profile
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    create: true

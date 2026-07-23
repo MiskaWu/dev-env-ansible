@@ -1,0 +1,17 @@
+---
+- name: Install baseline packages
+  become: true
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - git
+      - tmux
+      - ripgrep
+      - jq
+      - unzip
+      - build-essential
+    update_cache: true
+    cache_valid_time: 3600
