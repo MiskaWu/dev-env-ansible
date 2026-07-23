@@ -48,11 +48,16 @@ ansible-playbook site.yml --tags node
 `--check` is the dry-run preview; `--tags` installs a subset; re-running converges
 (idempotent) — that's the "add new things without tearing down" workflow.
 
-### Local test (no control node)
+On the box itself, the `make` targets wrap these (`make check`, `make apply`,
+`make apply TAGS=node`, `LOCAL=1` for a localhost run).
 
-```bash
-ansible-playbook -i 'localhost,' -c local site.yml -e ssh_key_tag=dev --check
-```
+### On WSL: `wsl --shutdown` after the first apply
+
+After `make apply` on a WSL distro, run **`wsl --shutdown`** (from Windows — not
+`--terminate`) once, then re-enter. Rootless `podman.socket` is enabled but WSL's
+systemd hits an executor cold-start race (`Failed to spawn executor: Device or
+resource busy`); only a full VM shutdown clears it, after which the socket
+auto-starts and `docker-compose` works. Not an install failure — a platform race.
 
 ## Config
 

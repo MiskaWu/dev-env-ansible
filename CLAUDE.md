@@ -67,10 +67,18 @@ WSL 上 systemd 259 的 user session 冷啟動 race 讓 `systemctl --user` 常�
 （`Failed to connect to user scope bus`），會讓**整個 play abort**（後面的 go/claude/uv 全
 沒跑）。而 enable 的本質就是 `sockets.target.wants/` 裡一個指向 unit 的 symlink——直接用
 `file: state=link` 建，**不需要 live 的 user manager**；啟動則 best-effort（`command:
-systemctl --user start ... ` + `failed_when: false`，race 擋住不致命，下次乾淨 session
-sockets.target 自然拉起）。相關：`is-system-running` 冷啟動一瞬 degraded，`wsl --terminate`
-重進即恢復——不是安裝失敗。（`.config` 若被 root 建走，這裡建 symlink 會 permission
-denied——見 wsl-bootstrap 的 provision.sh 用 `runuser` 建 `~/.config`。）
+systemctl --user start ... ` + `failed_when: false`，race 擋住不致命）。
+
+**socket 起不來、compose 連不到 socket → full `wsl --shutdown`（不是 `--terminate`）。**
+根因是 WSL 上 systemd 259 的 `user@<uid>.service` 起來後 spawn systemd-executor 失敗
+（journal: `Failed to spawn executor: Device or resource busy`），整個 user session
+degraded。`--terminate` 只停單一 distro、留了 VM 層狀態清不掉；**full `wsl --shutdown`
+重置整個 VM 才行**——之後乾淨 session 一來 `user@` active、symlink-enabled 的 podman.socket
+自動起、compose 端到端通（實測）。所以 `make apply` 裝完，Windows 端跑一次 `wsl --shutdown`
+再重進。這不是安裝失敗，是平台 race。
+
+（另：`.config` 若被 root 建走，建 symlink 會 permission denied——見 wsl-bootstrap 的
+provision.sh 用 `runuser` 建 `~/.config`。）
 
 **Windows 靠 NAT + `localhostForwarding` 就能連 distro 內容器 port**（`localhost:<port>`，
 零 forward，podman `-p` 綁 `0.0.0.0` 正好被 relay）。**不要為此改用 mirrored networking**：
