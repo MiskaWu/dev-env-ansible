@@ -62,10 +62,15 @@ WSL**，且**只有自建 bridge network（compose 一定會）才炸**——`po
 就 `return`，寫那裡的 `export`（`DOCKER_HOST`、`PATH`）`wsl -d dev -e`、腳本、cron 都讀不到。
 alias 放 `.bashrc` 沒問題（本來只對互動有意義）。
 
-**rootless `podman.socket`（systemd user scope）需要 `XDG_RUNTIME_DIR`。** 非互動情境未必有，
-task 明確給 `environment: XDG_RUNTIME_DIR=/run/user/{{ login_uid }}`。相關：systemd 259 在
-WSL 冷啟動時 user session 會短暫 race（`is-system-running` 一瞬 degraded），`wsl --terminate`
-重進即恢復——不是安裝失敗。
+**rootless `podman.socket` 用「建 enable symlink」啟用，不要 `systemctl --user enable`。**
+WSL 上 systemd 259 的 user session 冷啟動 race 讓 `systemctl --user` 常連不上 user bus
+（`Failed to connect to user scope bus`），會讓**整個 play abort**（後面的 go/claude/uv 全
+沒跑）。而 enable 的本質就是 `sockets.target.wants/` 裡一個指向 unit 的 symlink——直接用
+`file: state=link` 建，**不需要 live 的 user manager**；啟動則 best-effort（`command:
+systemctl --user start ... ` + `failed_when: false`，race 擋住不致命，下次乾淨 session
+sockets.target 自然拉起）。相關：`is-system-running` 冷啟動一瞬 degraded，`wsl --terminate`
+重進即恢復——不是安裝失敗。（`.config` 若被 root 建走，這裡建 symlink 會 permission
+denied——見 wsl-bootstrap 的 provision.sh 用 `runuser` 建 `~/.config`。）
 
 **Windows 靠 NAT + `localhostForwarding` 就能連 distro 內容器 port**（`localhost:<port>`，
 零 forward，podman `-p` 綁 `0.0.0.0` 正好被 relay）。**不要為此改用 mirrored networking**：
