@@ -16,7 +16,7 @@ dev-env-ansible/
 ├── ansible.cfg
 ├── site.yml                    # top playbook
 ├── inventory/hosts.yml         # managed hosts
-└── roles/dev-env/
+└── roles/dev_env/
     ├── defaults/main.yml       # tunables (toolchain toggles, go version, ssh scopes)
     └── tasks/
         ├── detect.yml          # sets is_wsl / go_arch / login_uid facts
