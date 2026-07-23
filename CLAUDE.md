@@ -37,7 +37,15 @@ ansible」的乾淨 WSL distro，這個 role 在那台上**本機 `make apply`**
 
 **repo 要放 `~/`，不要 `/mnt/c`。** ansible 不讀 world-writable 目錄（`/mnt/c` 就是）的
 `ansible.cfg`（會看到 `ignoring it as an ansible.cfg source` 警告），`stdout_callback`、
-`roles_path` 全失效；加上 `/mnt/c` I/O 慢。clone 到 dev 的 `~/projects` 再跑。
+`roles_path` 全失效；加上 `/mnt/c` I/O 慢。clone 到 dev 的 `~/projects` 再跑。**教訓**：
+從 `/mnt/c` 跑會**蓋掉 ansible.cfg 的問題**——2026-07 那次 `stdout_callback = yaml`（見下）
+在 `/mnt/c` 完全沒事，搬到 `~/` 才炸。驗 role 一定要從 `~/` 跑。
+
+**不要在 ansible.cfg 設 `stdout_callback = yaml`。** 舊的 `community.general.yaml` callback
+在 ansible-core 2.20 已移除，設了會 `[ERROR]: The 'community.general.yaml' callback plugin
+has been removed` **整個 run 開頭中止、什麼都沒裝**。更陰險：`make apply` 回非零，但外層
+（背景任務 / wsl.exe）可能把 exit code 誤報成 0，看起來「成功」實則沒做事。要 yaml 輸出用
+default callback 的 `result_format`，別用舊 callback。
 
 **netavark 預設 nftables driver 在 WSL2 kernel 上失敗。** 症狀：`docker-compose up` 容器
 卡在 `Created`，或 `netavark: nftables error: "nft" did not return successfully`。**只在
