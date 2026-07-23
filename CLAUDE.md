@@ -1,0 +1,76 @@
+# CLAUDE.md
+
+## 這個 repo 是什麼
+
+Ansible role，把一台 Linux 裝成完整開發環境：baseline 套件、Podman(rootless)、Go、
+Claude Code、可選 Node/uv/client tools/SSH keys。**host-agnostic** —— WSL2-specific 的
+task 用 `is_wsl` fact gate 起來，同一個 role 能跑純 Ubuntu VM / homelab 節點 / WSL。
+
+跟 `wsl-bootstrap` 配對：後者在 Windows 上生出一台「systemd + 預設 user + git/make/
+ansible」的乾淨 WSL distro，這個 role 在那台上**本機 `make apply`** 把軟體裝起來。
+
+「正確」= 對已裝好的 host 跑 `make check` 是 `changed=0`（完全冪等）。
+
+## 執行模型
+
+- **本機 make apply（預設）**：在 box 上 `cd ~/projects/dev-env-ansible && make apply`。
+  `connection: local` 對 localhost 收斂。baseline 已有 ansible-core（wsl-bootstrap 裝的）。
+- `make check` = 乾跑預覽（`--check --diff`）、`make apply TAGS=node` = 只裝某項、
+  `LOCAL=1` = 對 localhost 跑（見 Makefile）。
+- 未來要 control node 遠端管，用 Windows OpenSSH 的 ProxyJump 或 Tailscale——**不要用 WSL
+  mirrored networking**（見下）。
+
+## 慣例
+
+- **`is_wsl` gate**：只在 WSL 成立的 task（netavark→iptables、containers.conf）放
+  `when: is_wsl`。`detect.yml` 用 `ansible_facts.kernel` 判。跨用的關鍵，別拿掉。
+- **fact 一律用 `ansible_facts.*`**（`ansible_facts.env.HOME`、`.date_time.date`…），不用
+  top-level `ansible_env` / `ansible_date_time`——後者 `INJECT_FACTS_AS_VARS` 會在
+  ansible-core 2.24 移除，用了會噴 deprecation。
+- **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+- **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
+- **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
+  `.yml` 裡餵給 shell task 的內容也怕 `\r`。
+- 註解 / commit 訊息用繁體中文，README 英文。
+
+## 已知地雷（軟體 / WSL 層，2026-07 踩過）
+
+**repo 要放 `~/`，不要 `/mnt/c`。** ansible 不讀 world-writable 目錄（`/mnt/c` 就是）的
+`ansible.cfg`（會看到 `ignoring it as an ansible.cfg source` 警告），`stdout_callback`、
+`roles_path` 全失效；加上 `/mnt/c` I/O 慢。clone 到 dev 的 `~/projects` 再跑。
+
+**netavark 預設 nftables driver 在 WSL2 kernel 上失敗。** 症狀：`docker-compose up` 容器
+卡在 `Created`，或 `netavark: nftables error: "nft" did not return successfully`。**只在
+WSL**，且**只有自建 bridge network（compose 一定會）才炸**——`podman run` 走 pasta 預設
+網路不碰防火牆規則所以正常，所以「`podman run` 全綠但 compose 全爆」是標準失敗形狀。
+解法：裝 `iptables` + 寫 `/etc/containers/containers.conf` `firewall_driver = "iptables"`
+（`podman.yml` 的 `when: is_wsl` task）。
+
+**Ubuntu 完全不出貨 `/etc/containers/registries.conf`**，內建 short-name 別名表也沒有
+`postgres`/`redis`/`nats` → `podman pull postgres` 直接失敗（fail fast，不卡 TTY）。
+`podman.yml` 寫 `unqualified-search-registries = ["docker.io"]`。這是 Ubuntu-general，不 gate。
+
+**環境變數放 `~/.profile`，不是 `~/.bashrc`。** Ubuntu 預設 `.bashrc` 開頭對非互動 shell
+就 `return`，寫那裡的 `export`（`DOCKER_HOST`、`PATH`）`wsl -d dev -e`、腳本、cron 都讀不到。
+alias 放 `.bashrc` 沒問題（本來只對互動有意義）。
+
+**rootless `podman.socket`（systemd user scope）需要 `XDG_RUNTIME_DIR`。** 非互動情境未必有，
+task 明確給 `environment: XDG_RUNTIME_DIR=/run/user/{{ login_uid }}`。相關：systemd 259 在
+WSL 冷啟動時 user session 會短暫 race（`is-system-running` 一瞬 degraded），`wsl --terminate`
+重進即恢復——不是安裝失敗。
+
+**Windows 靠 NAT + `localhostForwarding` 就能連 distro 內容器 port**（`localhost:<port>`，
+零 forward，podman `-p` 綁 `0.0.0.0` 正好被 relay）。**不要為此改用 mirrored networking**：
+2026 仍有 rootless podman 的 open bug（WSL #13317 ~3 分 timeout、#13868 `127.0.0.1` 連不到），
+且 mirrored 會關掉 `localhostForwarding`。唯一小坑：綁 IPv6-only(`::`) 的服務不 relay，綁
+`0.0.0.0`（podman `-p` 預設就是）。
+
+**OOM trap（實測未遇到，記著防復發）**：compose 經 systemd user unit 呼叫 podman，容器繼承
+`OOMScoreAdjust=100`，規格要求 0 時非特權調不下來 → `oom_score_adj: Permission denied`。
+`podman run` 不受影響。解法：`user@.service` 加 `OOMScoreAdjust=0` drop-in。
+
+## 驗證
+
+- `make syntax`（不連線）→ 語法。
+- `make check`（對已裝好的 host）→ 應 `changed=0`；有 `changed` 就代表某 task 沒寫對冪等。
+- 加新 task 後先 `make check` 看 diff，再 `make apply`。
