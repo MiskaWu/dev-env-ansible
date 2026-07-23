@@ -17,6 +17,6 @@ install_clients: true              # psql, redis-cli, nats
 
 # ---- SSH key ----
 generate_ssh_keys: true
-ssh_key_tag: "{{ inventory_hostname }}"   # 檔名前綴 id_ed25519_<tag>_<scope>
+ssh_key_tag: dev                          # 檔名前綴 id_ed25519_<tag>_<scope>；跨用到別台就覆蓋
 ssh_key_scopes: [github, gitlab]
-ssh_key_comment: "miskawu@baasgames-dev"  # phase3 會接上 -<scope> 與建置日期
+ssh_key_comment: "miskawu@baasgames-dev"  # role 會接上 -<scope> 與建置日期
