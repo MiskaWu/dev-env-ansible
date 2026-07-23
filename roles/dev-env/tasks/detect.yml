@@ -1,0 +1,22 @@
+---
+# WSL-only 的 task 靠這個 fact gate 起來，讓這個 role 能跨用到非 WSL 的 Linux host。
+- name: Detect environment
+  ansible.builtin.set_fact:
+    is_wsl: "{{ ('microsoft' in ansible_facts.kernel | lower) or ('wsl' in ansible_facts.kernel | lower) }}"
+    go_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+
+- name: Get login uid
+  ansible.builtin.command: id -u
+  changed_when: false
+  check_mode: false          # 唯讀，check mode 也要跑，否則 login_uid 會 undefined
+  register: _login_uid
+
+- name: Set uid fact
+  ansible.builtin.set_fact:
+    login_uid: "{{ _login_uid.stdout }}"
+
+- name: Environment summary
+  ansible.builtin.debug:
+    msg: >-
+      host={{ inventory_hostname }} kernel={{ ansible_facts.kernel }}
+      arch={{ ansible_facts.architecture }} is_wsl={{ is_wsl }} uid={{ login_uid }}

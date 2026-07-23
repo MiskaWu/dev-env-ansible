@@ -1,0 +1,32 @@
+---
+- import_tasks: detect.yml
+  tags: always
+
+- import_tasks: base.yml
+  tags: [base]
+
+- import_tasks: podman.yml
+  when: container_runtime == 'podman'
+  tags: [podman, runtime]
+
+- import_tasks: go.yml
+  tags: [go]
+
+- import_tasks: claude.yml
+  tags: [claude]
+
+- import_tasks: node.yml
+  when: install_node
+  tags: [node]
+
+- import_tasks: python.yml
+  when: install_python
+  tags: [python, uv]
+
+- import_tasks: clients.yml
+  when: install_clients
+  tags: [clients]
+
+- import_tasks: ssh_keys.yml
+  when: generate_ssh_keys
+  tags: [ssh]

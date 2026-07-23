@@ -1,0 +1,3 @@
+# 這個 repo 只在 Linux（control node / 目標 host）上跑，一律 LF。
+# Makefile 用 tab 縮排、CRLF 會出問題；.yml 餵給 bash 的 shell task 也怕 \r。
+* text=auto eol=lf

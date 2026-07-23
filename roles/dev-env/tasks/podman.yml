@@ -1,0 +1,73 @@
+---
+- name: Install Podman and rootless dependencies
+  become: true
+  ansible.builtin.apt:
+    name: [podman, buildah, skopeo, uidmap, slirp4netns, fuse-overlayfs]
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- WSL2-only：netavark 預設的 nftables driver 在 WSL2 kernel 上失敗，
+#     會弄壞每一個 compose bridge network。改用 iptables driver（xtables-nft 相容層）。
+- name: Install iptables (WSL2 netavark driver)
+  become: true
+  ansible.builtin.apt:
+    name: iptables
+  when: is_wsl
+
+- name: containers.conf — iptables firewall driver
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/containers/containers.conf
+    mode: "0644"
+    content: |
+      [network]
+      firewall_driver = "iptables"
+  when: is_wsl
+
+# Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats。
+- name: registries.conf — docker.io unqualified search
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/containers/registries.conf
+    mode: "0644"
+    content: |
+      unqualified-search-registries = ["docker.io"]
+      short-name-mode = "disabled"
+
+- name: Enable linger so rootless services run without an active login
+  become: true
+  ansible.builtin.command: "loginctl enable-linger {{ ansible_facts.user_id }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ ansible_facts.user_id }}"
+
+- name: Install docker-compose shim binary
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-{{ ansible_facts.architecture }}"
+    dest: /usr/local/bin/docker-compose
+    mode: "0755"
+  when: compose_shim
+
+# scope: user 的 systemd 需要 XDG_RUNTIME_DIR —— 非互動 SSH 未必有，明確給。
+- name: Enable rootless podman.socket
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    enabled: true
+    state: started
+    scope: user
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ login_uid }}"
+
+# 環境變數放 ~/.profile（.bashrc 對非互動 shell 提早 return，讀不到）。
+- name: DOCKER_HOST in ~/.profile
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    line: 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
+    create: true
+
+# alias 只對互動 shell 有意義，放 .bashrc。
+- name: docker=podman alias in ~/.bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts.env.HOME }}/.bashrc"
+    line: "alias docker=podman"
+    create: true
