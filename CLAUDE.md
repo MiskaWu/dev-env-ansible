@@ -31,7 +31,7 @@ ansible」的乾淨 WSL distro，這個 role 在那台上**本機 `make apply`**
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
-- 註解 / commit 訊息用繁體中文，README 英文。
+- 註解 / commit 訊息 / README 都用繁體中文（2026-07 起 README 也改繁中）。
 
 ## 已知地雷（軟體 / WSL 層，2026-07 踩過）
 
