@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: dev_env
+  namespace: miskawu
+  author: miskawu
+  description: >-
+    Complete Linux development environment — baseline packages, rootless Podman,
+    Go, Claude Code, and an opt-in toolchain. WSL2-specific tasks are gated on an
+    is_wsl fact, so the same role runs on any Ubuntu host.
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - development
+    - podman
+    - go
+    - wsl
+
+dependencies: []
