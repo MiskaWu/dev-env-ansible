@@ -27,6 +27,5 @@
   when: install_clients
   tags: [clients]
 
-- import_tasks: ssh_keys.yml
-  when: generate_ssh_keys
-  tags: [ssh]
+# 注意：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
+# （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。
