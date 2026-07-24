@@ -24,6 +24,39 @@
       firewall_driver = "iptables"
   when: is_wsl
 
+# --- WSL2-only：WSL 的 `/` 是 private mount propagation（正常 systemd 系統開機時會把
+#     根設成 shared，WSL 沒做）。rootless podman 會警告
+#     `"/" is not a shared mount, ... missing mounts with rootless containers`，
+#     且容器內的 mount 傳播可能不正確（對 k3s 這種大量 mount 的東西特別有影響）。
+#     用開機早期的 oneshot systemd unit 把 / 設成 rshared，一勞永逸。
+- name: WSL — systemd unit 讓 / 在開機時變 rshared（rootless podman 需要）
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/rshared-root.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Make / a shared mount for rootless podman (WSL leaves it private)
+      DefaultDependencies=no
+      After=local-fs.target
+      Before=sysinit.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/mount --make-rshared /
+      RemainAfterExit=yes
+      [Install]
+      WantedBy=sysinit.target
+  when: is_wsl
+  register: _rshared_unit
+
+- name: WSL — enable rshared-root.service
+  become: true
+  ansible.builtin.systemd_service:
+    name: rshared-root.service
+    enabled: true
+    daemon_reload: "{{ _rshared_unit is changed }}"
+  when: is_wsl
+
 # Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats。
 - name: registries.conf — docker.io unqualified search
   become: true
