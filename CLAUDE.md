@@ -6,17 +6,24 @@ Ansible role，把一台 Linux 裝成完整開發環境：baseline 套件、Podm
 Claude Code、可選 Node/uv/client tools/SSH keys。**host-agnostic** —— WSL2-specific 的
 task 用 `is_wsl` fact gate 起來，同一個 role 能跑純 Ubuntu VM / homelab 節點 / WSL。
 
-跟 `wsl-bootstrap` 配對：後者在 Windows 上生出一台「systemd + 預設 user + git/make/
-ansible」的乾淨 WSL distro，這個 role 在那台上**本機 `make apply`** 把軟體裝起來。
+跟 `wsl-bootstrap` 配對：後者在 Windows 上生出一台「systemd + 預設 user + **git + make**」
+的乾淨 WSL distro（baseline **不含 ansible**），這個 role 在那台上**本機 `make apply`** 把
+軟體裝起來。Makefile 是唯一操作入口，跨平台通用（任何有 git+make 的 host 都能 clone + `make
+init`）。
 
 「正確」= 對已裝好的 host 跑 `make check` 是 `changed=0`（完全冪等）。
 
 ## 執行模型
 
-- **本機 make apply（預設）**：在 box 上 `cd ~/projects/dev-env-ansible && make apply`。
-  `connection: local` 對 localhost 收斂。baseline 已有 ansible-core（wsl-bootstrap 裝的）。
-- `make check` = 乾跑預覽（`--check --diff`）、`make apply TAGS=node` = 只裝某項、
-  `LOCAL=1` = 對 localhost 跑（見 Makefile）。
+- **Makefile 是入口，ansible 由它自己補。** bring-up 只給 git+make；`check`/`apply`/`syntax`/
+  `facts` 都依賴內部 `_ensure-ansible`，第一次跑會 `apt install ansible-core`（**不能用 ansible
+  裝 ansible**，所以這層由 make 補）。這是刻意的解耦——bring-up 不預設你用哪套組態管理。
+- **本機 make apply（預設）**：`cd ~/projects/dev-env-ansible && make apply`。`LOCAL` 預設
+  `1`（`connection: local` 對 localhost 收斂），在 distro 內不用帶；控制節點模式設 `LOCAL=0`。
+- **起手 / 收尾也走 make**：`make init` = apply + 印公鑰 + 收尾清單一鍵；`make ssh-keys` 印
+  公鑰給你貼 GitHub/GitLab；`make git-config GIT_NAME=.. GIT_EMAIL=..` 設 git 身分。**貼公鑰到
+  平台、`claude` OAuth 刻意保持手動**（不把 GitHub 憑證帶進自動化）。
+- `make check` = 乾跑預覽（`--check --diff`）、`make apply TAGS=node` = 只裝某項。
 - 未來要 control node 遠端管，用 Windows OpenSSH 的 ProxyJump 或 Tailscale——**不要用 WSL
   mirrored networking**（見下）。
 
@@ -31,6 +38,9 @@ ansible」的乾淨 WSL distro，這個 role 在那台上**本機 `make apply`**
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
+- **Makefile `?=` 後面不要接行內 `# 註解`**：make 會把「值到 `#` 之間的空白」算進變數值
+  （`SSH_TAG ?= dev  # x` → `"dev  "`；`LOCAL ?= 1  # x` → `"1  "`，`$(filter 1,…)` 就對不上、
+  `LOCAL=1` 預設靜默失效，`ssh-keys` 的 glob 也會抓錯路徑）。註解一律另起一行。2026-07 踩過。
 - 註解 / commit 訊息 / README 都用繁體中文（2026-07 起 README 也改繁中）。
 
 ## 已知地雷（軟體 / WSL 層，2026-07 踩過）
