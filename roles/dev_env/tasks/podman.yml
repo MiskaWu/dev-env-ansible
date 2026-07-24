@@ -115,9 +115,12 @@
     line: 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
     create: true
 
-# alias 只對互動 shell 有意義，放 .bashrc。
-- name: docker=podman alias in ~/.bashrc
+# 使用者只用 podman，不要 alias docker=podman（避免 docker/podman 同名混淆）。
+# state: absent —— 套用時主動移除 .bashrc 裡那行（不只是不再加）。
+# 註：DOCKER_HOST 保留（指向 podman socket），compose 仍走 `podman compose`（用
+# docker-compose 二進位當 provider）與需要 Docker API 的工具（IDE / testcontainers）。
+- name: Remove docker=podman alias from ~/.bashrc（只用 podman）
   ansible.builtin.lineinfile:
     path: "{{ ansible_facts.env.HOME }}/.bashrc"
     line: "alias docker=podman"
-    create: true
+    state: absent
