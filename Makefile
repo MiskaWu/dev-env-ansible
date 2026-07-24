@@ -7,8 +7,8 @@ MAKEFLAGS += --no-builtin-rules
 .NOTPARALLEL:
 
 # ---- 可由外部覆蓋 ----------------------------------------------------------
-# 注意：這些 ?= 後面不要接行內 `# 註解` —— make 會把值到 # 之間的空白算進變數值
-# （SSH_TAG 會變 "dev   "、LOCAL 會變 "1   "，$(filter 1,…) 就對不上），故註解另起一行。
+# 注意：這些 ?= 後面不要接行內 `# 註解` —— make 會把「值到 `#` 之間的空白」算進變數值
+# （LOCAL 會變 "1   " 讓 $(filter 1,…) 對不上），故註解一律另起一行。
 INVENTORY ?= inventory/hosts.yml
 PLAYBOOK  ?= site.yml
 # TAGS：只裝某些 tag，例 `make apply TAGS=node`
@@ -17,11 +17,6 @@ LIMIT     ?=
 # LOCAL=1：對本機 localhost 跑（在 distro 內用就對了）；控制節點模式設 LOCAL=0
 LOCAL     ?= 1
 EXTRA     ?=
-# SSH_TAG：SSH key 檔名前綴，對齊 role 的 ssh_key_tag
-SSH_TAG   ?= dev
-# GIT_NAME / GIT_EMAIL：make git-config 用
-GIT_NAME  ?=
-GIT_EMAIL ?=
 
 # ---- 內部組裝 --------------------------------------------------------------
 # COMMA：localhost, 裡的逗號會跟 $(if) 的引數分隔逗號相撞，必須用變數繞過。
@@ -31,35 +26,20 @@ _TAGS  := $(if $(TAGS),--tags $(TAGS),)
 _LIMIT := $(if $(LIMIT),--limit $(LIMIT),)
 _ARGS  := $(_CONN) $(_TAGS) $(_LIMIT) $(EXTRA)
 
-.PHONY: help init check apply syntax lint facts ssh-keys git-config _ensure-ansible
+.PHONY: help init check apply syntax lint facts _ensure-ansible
 
 help: ## 顯示所有可用命令
 	@awk 'BEGIN {FS = ":.*##"; printf "\n使用方式:\n  make \033[36m<target>\033[0m\n"} \
 		/^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } \
 		/^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
 
-##@ 起手（乾淨機器 → 一路裝好）
-init: apply ssh-keys ## 一鍵：裝軟體 + 印公鑰 + 印收尾清單
+##@ 起手（乾淨機器 → 裝好軟體）
+init: apply ## 裝軟體 + 印收尾清單（SSH keys / git 身分已由 bring-up 備好）
 	@echo
-	echo "收尾（這幾步是你手動，刻意不自動化）："
-	echo "  1. 上面的公鑰貼到 GitHub / GitLab"
-	echo "  2. make git-config GIT_NAME=\"你的名字\" GIT_EMAIL=\"你的信箱\""
-	echo "  3. claude    # 首次瀏覽器 OAuth"
-
-git-config: ## 設定 git 身分（GIT_NAME=... GIT_EMAIL=...）
-	@if [ -z "$(GIT_NAME)" ] || [ -z "$(GIT_EMAIL)" ]; then
-		echo "用法：make git-config GIT_NAME=\"你的名字\" GIT_EMAIL=\"你的信箱\""
-		exit 1
-	fi
-	git config --global user.name  "$(GIT_NAME)"
-	git config --global user.email "$(GIT_EMAIL)"
-	echo "git 身分：$$(git config --global user.name) <$$(git config --global user.email)>"
-
-ssh-keys: ## 印出 SSH 公鑰（貼到 GitHub/GitLab；key 由 apply 產生）
-	@shopt -s nullglob
-	keys=($$HOME/.ssh/id_ed25519_$(SSH_TAG)_*.pub)
-	if [ $${#keys[@]} -eq 0 ]; then echo "（還沒有 key —— 先 make apply）"; exit 0; fi
-	for f in "$${keys[@]}"; do echo "--- $$(basename "$$f") ---"; cat "$$f"; done
+	echo "軟體裝好了。收尾（手動，刻意不自動化）："
+	echo "  1. SSH 公鑰貼到 GitHub / GitLab（bring-up 已生成）："
+	echo "       cat ~/.ssh/id_ed25519_*.pub"
+	echo "  2. claude    # 首次瀏覽器 OAuth"
 
 ##@ 軟體（Ansible）
 check: _ensure-ansible ## 乾跑預覽：列出這次會改什麼、不套用（--check --diff）

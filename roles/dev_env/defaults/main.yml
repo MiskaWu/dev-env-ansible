@@ -15,8 +15,5 @@ node_version: lts                  # nvm 認得的字串：'lts' / '22' / '22.11
 install_python: true               # uv
 install_clients: true              # psql, redis-cli, nats
 
-# ---- SSH key ----
-generate_ssh_keys: true
-ssh_key_tag: dev                          # 檔名前綴 id_ed25519_<tag>_<scope>；跨用到別台就覆蓋
-ssh_key_scopes: [github, gitlab]
-ssh_key_comment: "miskawu@baasgames-dev"  # role 會接上 -<scope> 與建置日期
+# 註：SSH key 與 git 身分不在這個 role —— 由 wsl-bootstrap 的 provision.sh 在 bring-up 就
+# 備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。設定在 config.ps1。

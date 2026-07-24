@@ -3,13 +3,16 @@
 ## 這個 repo 是什麼
 
 Ansible role，把一台 Linux 裝成完整開發環境：baseline 套件、Podman(rootless)、Go、
-Claude Code、可選 Node/uv/client tools/SSH keys。**host-agnostic** —— WSL2-specific 的
-task 用 `is_wsl` fact gate 起來，同一個 role 能跑純 Ubuntu VM / homelab 節點 / WSL。
+Claude Code、可選 Node/uv/client tools。**host-agnostic** —— WSL2-specific 的 task 用
+`is_wsl` fact gate 起來，同一個 role 能跑純 Ubuntu VM / homelab 節點 / WSL。
 
-跟 `wsl-bootstrap` 配對：後者在 Windows 上生出一台「systemd + 預設 user + **git + make**」
-的乾淨 WSL distro（baseline **不含 ansible**），這個 role 在那台上**本機 `make apply`** 把
-軟體裝起來。Makefile 是唯一操作入口，跨平台通用（任何有 git+make 的 host 都能 clone + `make
-init`）。
+**git 身分與 SSH keys 不在這個 role** —— 由 `wsl-bootstrap` 的 `provision.sh` 在 bring-up 就
+備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。這個 role 只管軟體。
+
+跟 `wsl-bootstrap` 配對：後者在 Windows 上生出一台「systemd + 預設 user + **git + make** +
+git 身分 + SSH keys」的乾淨 WSL distro（baseline **不含 ansible**），這個 role 在那台上
+**本機 `make apply`** 把軟體裝起來。Makefile 是唯一軟體操作入口，跨平台通用（任何有 git+make
+的 host 都能 clone + `make init`）。
 
 「正確」= 對已裝好的 host 跑 `make check` 是 `changed=0`（完全冪等）。
 
@@ -20,9 +23,8 @@ init`）。
   裝 ansible**，所以這層由 make 補）。這是刻意的解耦——bring-up 不預設你用哪套組態管理。
 - **本機 make apply（預設）**：`cd ~/projects/dev-env-ansible && make apply`。`LOCAL` 預設
   `1`（`connection: local` 對 localhost 收斂），在 distro 內不用帶；控制節點模式設 `LOCAL=0`。
-- **起手 / 收尾也走 make**：`make init` = apply + 印公鑰 + 收尾清單一鍵；`make ssh-keys` 印
-  公鑰給你貼 GitHub/GitLab；`make git-config GIT_NAME=.. GIT_EMAIL=..` 設 git 身分。**貼公鑰到
-  平台、`claude` OAuth 刻意保持手動**（不把 GitHub 憑證帶進自動化）。
+- **`make init`** = apply + 印收尾清單（貼 SSH 公鑰、`claude` OAuth）。key/git 身分 bring-up
+  已備好，這裡不再產。**貼公鑰到平台、`claude` OAuth 刻意保持手動**（不把 GitHub 憑證帶進自動化）。
 - `make check` = 乾跑預覽（`--check --diff`）、`make apply TAGS=node` = 只裝某項。
 - 未來要 control node 遠端管，用 Windows OpenSSH 的 ProxyJump 或 Tailscale——**不要用 WSL
   mirrored networking**（見下）。

@@ -1,7 +1,10 @@
 # dev-env-ansible
 
 把一台 Linux 裝成完整開發環境的 Ansible role：baseline 套件、Podman（rootless）、Go、
-Claude Code，以及可選的 toolchain（Node、uv、DB/cache clients、SSH keys）。
+Claude Code，以及可選的 toolchain（Node、uv、DB/cache clients）。
+
+（git 身分與 SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在 bring-up 就備好，
+因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。）
 
 **Host-agnostic** —— WSL2 專屬的 task 用 `is_wsl` fact gate 起來，所以同一個 role 也能跑在
 純 Ubuntu VM、homelab 節點或 WSL distro。搭配 [`wsl-bootstrap`](../wsl-bootstrap)：它產出一台
@@ -15,7 +18,7 @@ dev-env-ansible/
 ├── site.yml                    # 頂層 playbook
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
-    ├── defaults/main.yml       # 可調項（toolchain 開關、go 版本、ssh scopes）
+    ├── defaults/main.yml       # 可調項（toolchain 開關、go 版本）
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / go_arch / login_uid fact
         ├── base.yml            # baseline apt 套件
@@ -24,19 +27,18 @@ dev-env-ansible/
         ├── claude.yml          # Claude Code（native installer）
         ├── node.yml            # nvm + Node        (when: install_node)
         ├── python.yml          # uv               (when: install_python)
-        ├── clients.yml         # psql, redis-cli, nats (when: install_clients)
-        └── ssh_keys.yml        # 每個 scope 一把 ed25519 (when: generate_ssh_keys)
+        └── clients.yml         # psql, redis-cli, nats (when: install_clients)
 ```
 
 ## 首次設定
 
-前提：distro 已由 [`wsl-bootstrap`](../wsl-bootstrap) 建好，baseline **只有 `git` + `make`**
-（**沒有 ansible** —— 這個 repo 的 Makefile 第一次跑會自己 `apt install ansible-core`，因為
-不能用 ansible 裝 ansible）。以下都在 distro 內執行；`LOCAL` 預設 `1`（對本機跑），在
-distro 內不用帶。
+前提：distro 已由 [`wsl-bootstrap`](../wsl-bootstrap) 建好，baseline 只有 `git` + `make`
+（**沒有 ansible** —— 這個 repo 的 Makefile 第一次跑會自己 `apt install ansible-core`），而且
+**git 身分與 SSH keys 在 bring-up 就備好了**（那些不歸這個 role 管）。以下都在 distro 內
+執行；`LOCAL` 預設 `1`（對本機跑），不用帶。
 
-**1. 取得這個 repo。** 首次時 box 還沒有 GitHub 認得的 key（key 是 apply 才生成、還要你手動
-貼上 GitHub），所以直接從本機 Windows 複本 clone 最省事、零認證：
+**1. 取得這個 repo。** bring-up 已生成 SSH key，貼到 GitHub 後就能直接 clone 私有 repo；最
+省事則直接從本機 Windows 複本 clone（零認證）：
 
 ```bash
 wsl -d dev
@@ -44,13 +46,10 @@ git clone /mnt/c/Users/MiskaWu/Projects/dev-env-ansible ~/projects/dev-env-ansib
 cd ~/projects/dev-env-ansible
 ```
 
-（repo 若設 public，也可以 `git clone https://github.com/MiskaWu/dev-env-ansible.git`。）
-
-**2. 一鍵起手。** `make init` = 補 ansible → `make apply`（裝 podman/go/claude/toolchain +
-生 SSH key）→ `make ssh-keys`（印出要貼 GitHub 的公鑰）→ 印收尾清單：
+**2. 裝軟體。**
 
 ```bash
-make init
+make init     # 補 ansible → 裝 podman/go/claude/toolchain → 印收尾清單
 ```
 
 （只想預覽先 `make check`；只裝某一項 `make apply TAGS=node`。）
@@ -62,14 +61,13 @@ make init
 wsl --shutdown
 ```
 
-**4. 收尾**（手動接上平台，刻意不自動化）。`make init` 已把公鑰印出來，需要再印用 `make ssh-keys`：
+**4. 收尾**（手動接上平台，刻意不自動化）。SSH keys 與 git 身分 bring-up 已備好，剩貼與認證：
 
 ```bash
 wsl -d dev
-cd ~/projects/dev-env-ansible
-make ssh-keys                                    # 印公鑰 → 貼到 GitHub / GitLab
-make git-config GIT_NAME="你的名字" GIT_EMAIL="你的信箱"
-claude                                            # 首次 OAuth 認證
+cat ~/.ssh/id_ed25519_dev_github.pub    # 貼到 GitHub → Settings → SSH keys（若還沒貼）
+cat ~/.ssh/id_ed25519_dev_gitlab.pub    # 貼到 GitLab
+claude                                   # 首次 OAuth 認證
 # key 貼好後，把本 repo 的 origin 指向 GitHub（之後就能 git pull 更新）：
 git remote set-url origin git@github.com:MiskaWu/dev-env-ansible.git
 ```
@@ -110,6 +108,5 @@ session 一來 socket 自動起、`docker-compose` 就能用。這不是安裝�
 | `install_node` / `node_version` | `false` / `lts` | nvm + Node |
 | `install_python` | `true` | uv |
 | `install_clients` | `true` | `psql`、`redis-cli`、`nats` |
-| `generate_ssh_keys` | `true` | 每個 scope 一把 `id_ed25519_<ssh_key_tag>_<scope>` |
-| `ssh_key_scopes` | `[github, gitlab]` | 要產哪些 key |
-| `ssh_key_comment` | `miskawu@baasgames-dev` | key 註解；task 會接上 `-<scope>` 與建置日期 |
+
+（SSH keys / git 身分的設定在 `wsl-bootstrap` 的 `config.ps1`，不在這裡。）
