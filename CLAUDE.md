@@ -100,6 +100,19 @@ mirrored 開著時測的，功勞被錯算給 NAT。）關掉 mirrored 重測（
 `OOMScoreAdjust=100`，規格要求 0 時非特權調不下來 → `oom_score_adj: Permission denied`。
 `podman run` 不受影響。解法：`user@.service` 加 `OOMScoreAdjust=0` drop-in。
 
+**WSL 的 `/` 是 private mount propagation → 用 systemd unit 設成 rshared。** rootless
+podman 會警告 `"/" is not a shared mount ... missing mounts with rootless containers`，
+且容器內 mount 傳播可能不正確（**k3s 這種大量 mount 的負載特別會踩到**）。正常 systemd
+開機會把 `/` 設 shared，WSL 沒做（實測 `findmnt -no PROPAGATION /` = `private`）。
+`podman.yml` 裝一個開機早期的 oneshot unit（`rshared-root.service`，`is_wsl` gate，
+`Before=sysinit.target`）跑 `mount --make-rshared /`。手動 `mount --make-rshared /` 不持久
+（`wsl --shutdown` 就沒了），必須走 unit 才會每次開機生效。
+
+**只用 podman，不 alias `docker=podman`（使用者決定）。** alias task 是 `state: absent`
+——套用時**主動移除** `.bashrc` 裡既有的那行，不只是不再加。compose 走 `podman compose`
+（`docker-compose` 二進位當 provider），`DOCKER_HOST`（podman socket）保留給
+`podman compose` 與需要 Docker API 的工具（IDE / testcontainers）。
+
 ## 驗證
 
 - `make syntax`（不連線）→ 語法。
