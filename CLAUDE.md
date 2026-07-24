@@ -80,11 +80,21 @@ degraded。`--terminate` 只停單一 distro、留了 VM 層狀態清不掉；**
 （另：`.config` 若被 root 建走，建 symlink 會 permission denied——見 wsl-bootstrap 的
 provision.sh 用 `runuser` 建 `~/.config`。）
 
-**Windows 靠 NAT + `localhostForwarding` 就能連 distro 內容器 port**（`localhost:<port>`，
-零 forward，podman `-p` 綁 `0.0.0.0` 正好被 relay）。**不要為此改用 mirrored networking**：
-2026 仍有 rootless podman 的 open bug（WSL #13317 ~3 分 timeout、#13868 `127.0.0.1` 連不到），
-且 mirrored 會關掉 `localhostForwarding`。唯一小坑：綁 IPv6-only(`::`) 的服務不 relay，綁
-`0.0.0.0`（podman `-p` 預設就是）。
+**要從 Windows 連 distro 內的容器 port，`.wslconfig` 必須是 `networkingMode=mirrored`。**
+（2026-07 更正：這條原本寫「NAT + localhostForwarding 就夠」，但那個「實測通」是在
+mirrored 開著時測的，功勞被錯算給 NAT。）關掉 mirrored 重測（容器確認存活、純 WSL 程序
+作對照組）：
+
+| 模式 | Windows → 純 WSL 程序 | Windows → rootless podman 容器 port |
+|---|---|---|
+| NAT | ✅ | ❌ **不通** |
+| mirrored | ✅ | ✅ |
+
+`localhostForwarding` 只轉 WSL init netns 裡的 listener，**不轉 pasta 為 rootless 容器發佈
+的 port**。設定在 `wsl-bootstrap/wslconfig`（只用 `[wsl2]`，不加 `[experimental]` 的
+`hostAddressLoopback`——`127.0.0.1` 路徑不靠它）。mirrored 的已知 podman bug
+（#13868、#13317）本機實測未發生，但 WSL 更新後要重驗。
+另一個小坑：綁 IPv6-only(`::`) 的服務不會被 relay，綁 `0.0.0.0`（podman `-p` 預設就是）。
 
 **OOM trap（實測未遇到，記著防復發）**：compose 經 systemd user unit 呼叫 podman，容器繼承
 `OOMScoreAdjust=100`，規格要求 0 時非特權調不下來 → `oom_score_adj: Permission denied`。
