@@ -1,24 +1,59 @@
 ---
 # 這些是預設值，可在 inventory / group_vars / host_vars 覆蓋。
+#
+# 分層原則：這個 repo 是「以 Claude + Ansible 為基準的環境準備工具」，所以**核心只有
+# Claude Code 與讓它跑起來的最低相依**（base.yml 的 core packages），那部分無條件裝、
+# 沒有開關。**其餘全部是個人選裝** —— 語言 toolchain、容器 runtime、順手的 CLI 工具
+# 都一樣，換一台機器就換一組值，不該有誰有「寫死必裝」的特權。
 
-# ---- 容器 runtime ----
-container_runtime: podman          # 目前 role 只實作 podman 路徑
+# ---- 個人選裝：CLI 工具 -----------------------------------------------------
+# 「日常自己會敲的小工具」放這個清單：加一個工具＝加一行，不需要新的 task 檔
+# （為了一句 apt 開一個 task 檔 + 一個布林 + main.yml 一筆，就是這條要避免的）。
+# 兩個例外不放這裡：要版本解析 / 抓 tarball / 跑官方 installer 的（獨立 task，見下），
+# 以及編譯工具鏈（不是「敲的工具」而是別人的前置，見 install_build_tools）。
+# 設成 [] 就只剩 core packages。
+dev_env_packages:
+  - ripgrep                # rg：尊重 .gitignore 的遞迴搜尋
+  - jq                     # JSON 的 sed/awk
+  - unzip                  # 不少 release 只出 zip
+  - lazygit                # git 的 TUI；universe 的版本跟上游同代
+
+# 這個 role 只裝不卸：從上面的清單刪掉只代表「以後不裝」，已經裝好的不會被動到
+# （apt 的 state: present 只保證「有」）。要讓某個套件真的從機器上消失是手動的事
+# ——刻意如此，卸載是破壞性動作，不該每次 apply 都自動跑一遍。
+# 2026-07 移除的：postgresql-client / redis-tools（改用 podman run 跑 client）。
+
+# ---- 個人選裝：toolchain ----------------------------------------------------
+# 這幾個不是一句 apt 就完事（要查版本 / 抓 tarball / 跑官方 installer，或屬於別人的
+# 編譯前置），所以各自有開關。關掉就整段跳過（見 tasks/main.yml）。
+
+# 編譯工具鏈（gcc / g++ / make / libc6-dev）。**刻意不放在 dev_env_packages 裡** ——
+# 它不是「你會敲的工具」，而是上面兩個 toolchain 共用的前置：Go 碰到 cgo（最常見是
+# mattn/go-sqlite3）、uv 遇到沒有預編譯 wheel 而要現場編 C extension 時都靠它。
+# 體積是這份設定裡最大的單項（連相依約 260MB / 43 個套件，跟 Go 的 269MB 同級），
+# 但缺它的失敗訊息很難認（`exec: gcc: not found`、`error: command 'cc' failed`），
+# 而且總在你正在忙別的事情時才炸。開著是刻意的取捨，不是沒想過。
+install_build_tools: true
+
+# Go：「每個專案不同版本」不需要版本管理器 —— Go 1.21+ 預設 GOTOOLCHAIN=auto，go.mod
+# 要求更新的版本時 go 指令會自動下載並改用對應 toolchain。這裡只裝一個 bootstrap Go。
+# 注意 latest 表示「每次 apply 都查 go.dev」，會跟著上游走版。要凍住就 pin 版本。
+install_go: true
+go_version: latest                 # 'latest' 查 go.dev，或 pin 如 '1.26.5'
+
+# uv 不只是套件管理器，它自己也管 Python 版本（uv python install、讀 .python-version），
+# 所以不需要另外裝 pyenv 之類的東西。
+install_python: true
+
+# 容器 runtime。設成 'none'（或任何非 podman 的值）就整個跳過 podman.yml，
+# profile.yml 的 DOCKER_HOST 也會一起不寫。目前只實作 podman 路徑。
+container_runtime: podman
 
 # netavark 的 firewall driver。空字串 = 不寫 drop-in，用 netavark 預設（nftables）。
 # WSL2 kernel 上 nftables driver 會壞掉（自建 bridge network 全滅），故改走 iptables
 # （實際是 iptables-nft 相容層）。這裡引用 detect.yml 設的 is_wsl —— Ansible 變數是
 # 延遲求值，podman.yml 用到時 is_wsl 已經存在。
 podman_firewall_driver: "{{ 'iptables' if is_wsl else '' }}"
-
-# ---- Go（寫死必裝，只選版本）----
-# 「每個專案不同 Go 版本」不需要版本管理器：Go 1.21+ 預設 GOTOOLCHAIN=auto，go.mod
-# 要求更新的版本時 go 指令會自動下載並改用對應 toolchain。這裡只裝一個 bootstrap Go。
-# 注意 latest 表示「每次 apply 都查 go.dev」，Go 會跟著上游走版。要凍住就 pin 版本。
-go_version: latest                 # 'latest' 查 go.dev，或 pin 如 '1.26.5'
-
-# ---- 可選 toolchain ----
-install_python: true               # uv（uv 自己也管 Python 版本：uv python install）
-install_clients: true              # psql, redis-cli
 
 # 註：SSH key 與 git 身分不在這個 role —— 由 wsl-bootstrap 的 provision.sh 在 bring-up 就
 # 備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。設定在 config.ps1。

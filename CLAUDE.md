@@ -7,6 +7,26 @@
 
 ## 慣例
 
+- **核心只有 Claude Code + 它的最低相依，其餘一律是選裝。** 這個 repo 是「以 Claude +
+  Ansible 為基準的環境準備工具」，所以 `base.yml` 的 core packages（`ca-certificates` /
+  `curl` / `git`）與 `claude.yml` 無條件跑，**其他每一個 import 都必須有 `when`**——
+  **包含 Go**（2026-07 之前它是無條件必裝，那是分層畫錯）。判斷「這個要不要放 core」
+  只問一句：少了它還能不能把這台機器準備起來？「好用」不是理由。
+- **多裝一個 apt 小工具＝在 `dev_env_packages` 加一行**，不要開新的 task 檔。獨立 task 是
+  留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
+  以前 psql/redis 有自己的 `clients.yml` + `install_clients`、lazygit 也差點為了一句
+  `apt install` 開一個檔 + 一個布林 + `main.yml` 一筆 + README 一列——就是要避免那個。
+  **但編譯工具鏈不進那個清單**：`build-essential` 不是「你會敲的工具」，是 Go（cgo）與
+  uv（C extension）共用的前置，所以獨立成 `install_build_tools`。清單是「日常敲的東西」，
+  別讓它變成什麼都往裡丟的雜物袋。
+- **這個 role 只裝不卸（使用者決定），卸載一律手動。** apt 的 `state: present` 只保證
+  「有」，所以從 `dev_env_packages` 刪掉只是「以後不裝」，已經裝好的會留著。**不要**因此
+  去加一個「absent 清單 + `purge`」的機制——那等於每次 `apply` 都跑一遍破壞性動作，
+  清單打錯一個字就照刪；移除交給使用者刻意執行。2026-07 加過又拿掉，別再繞回來。
+  手動移除前先 `apt-get -s purge --autoremove <pkg>` 看影響範圍，發行版自帶的尤其要看：
+  `tmux` 是 Ubuntu WSL base image 內建（跟 `byobu`、`ubuntu-wsl` 同一批裝進來，dpkg.log
+  可查，所以 role 那行 `apt: tmux` 一直是 no-op），purge 它會連 `byobu` 和 `ubuntu-wsl`
+  metapackage 一起拔掉。
 - **`is_wsl` gate**：只在 WSL 成立的 task（netavark firewall driver、rshared-root unit）放
   `when: is_wsl`。`detect.yml` 用 `ansible_facts.kernel` 判。跨用的關鍵，別拿掉。
 - **fact 一律用 `ansible_facts.*`**（`ansible_facts.env.HOME`、`.date_time.date`…），不用
@@ -17,7 +37,16 @@
 - **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
 - **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
   python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
-  沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。
+  沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。另外兩條配套規則：
+  - **開關在 Jinja `{% raw %}{% if %}{% endraw %}` 裡一定要 `| bool`。** `when:` 是 Ansible
+    自己做布林轉換、看得懂 `-e install_go=false` 傳來的字串 `"false"`；`{% raw %}{% if %}{% endraw %}`
+    是純 Jinja，非空字串一律 truthy。少了 `| bool`，`make apply EXTRA='-e install_go=false'`
+    會裝出「Go 沒裝但 `.profile` 有 Go PATH」的環境，而用 `group_vars` 傳真 YAML 布林卻正常
+    ——**只有某一種傳法會壞**，所以更要寫死。2026-07 加 `install_go` 時踩到。
+  - **`lineinfile: state=absent` 不認 managed block 的邊界**，它比對整行、block 內外一起刪。
+    清舊版殘留的那幾行字串，必須確定在**任何開關組合下**都不會跟 block 產出的行逐字相同，
+    否則會變成「清掉 → blockinfile 補回 → 每次 apply 都 changed」。`.local/bin` 那行就是這樣
+    才被拆成獨立、`when: install_go | bool` 的 task。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
