@@ -18,13 +18,20 @@
   上游改 manifest 結構就靜默失效、還印出誤導的 "Platform … not found in manifest"。
   要再往 core 加東西就拿出這種等級的證據：**在某個必經路徑的原始碼裡指得出它被呼叫**，
   而不是「Claude 大概會用到」。
-  **`ripgrep` 查過了，不夠格 —— 留在 `dev_env_packages`。** 它確實是 Claude Code 唯一
-  另一個會 `command -v` 找的工具（binary 裡 `command -v` 的對象只有 4 個：`rg`、`jq`、
-  `powershell.exe`、`compinit`），一度看起來跟 jq 同級。但 rg 有兩種來源，binary 裡的
-  mode 只有 `"embedded"` 與 `"system"` 兩個值，而它自己的錯誤訊息把話講死了：
+  **`ripgrep` 查過了，不夠格 —— 2026-07-27 連選裝也一起拿掉了。** 它確實是 Claude Code
+  唯一另一個會 `command -v` 找的工具（binary 裡 `command -v` 的對象只有 4 個：`rg`、
+  `jq`、`powershell.exe`、`compinit`），一度看起來跟 jq 同級。但 rg 有兩種來源，binary
+  裡的 mode 只有 `"embedded"` 與 `"system"` 兩個值，而它自己的錯誤訊息把話講死了：
   `ripgrep not found on PATH. Install it (…) or use the native claude binary which
   embeds it.` —— **我們走的正是 native installer，rg 是內嵌的**，系統那支只有 npm
-  安裝版才需要。所以裝 `ripgrep` 是為了你自己在 shell 敲 `rg`，不是為了 Claude。
+  安裝版才需要。
+  **這條有實驗，不是只讀字串**：把常用工具 symlink 進一個乾淨目錄（**故意不放 `rg`**）、
+  以那個目錄當唯一 `PATH`，再跑
+  `claude -p "<用 Grep 搜某個字串>" --allowedTools Grep`（只給 Grep、不給 Bash，逼它走
+  內建搜尋路徑）—— **命中目標、零錯誤**。所以系統上沒有 rg 也不影響 Claude。
+  剩下的理由只有「自己在 shell 敲 `rg`」，使用者用不太到，就不裝了。
+  **副作用要知道**：新機器上 Bash 裡直接敲 `rg` 會 command not found（改用 Grep 工具
+  或 `grep -r`）；已經裝了 rg 的機器不受影響 —— 這個 role 只裝不卸。
   **這組對照就是這條規則的範本**：兩個工具都被 Claude「用到」，但 jq 是外部相依
   （installer 是 shell script，沒辦法內嵌），rg 是自帶。要往 core 加東西就查到這個
   程度為止 —— 「Claude 會用到」不等於「Claude 需要系統上有」。
