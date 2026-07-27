@@ -35,6 +35,10 @@
 - **facts 已經有的別再 shell 出去拿**：`ansible_facts.user_uid` / `.user_id` 就是「ansible
   實際連進去的那個 user」，不用另外跑 `id -u`（少一個 task，也少一個 `check_mode: false` 例外）。
 - **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+- **驗證指令別把 exit code 洗掉**：`if cmd | grep x | sed …; then` 的成敗取決於 pipeline
+  的**最後一個**指令，而 `sed` 永遠回 0 —— 失敗會被判成成功。2026-07 驗 podman 網路時就
+  這樣做出一次假陽性，差點把「其實還壞著」的 WSL workaround 拿掉。要判成敗就
+  `out=$(cmd 2>&1)` 之後對 `$out` 檢查，或加 `set -o pipefail`。
 - **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
   python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
   沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。另外兩條配套規則：
@@ -84,19 +88,47 @@ default callback 的 `result_format`，別用舊 callback。
 Debian changelog 也兩次寫明「Default to nftables, again」。吃預設 = 換台機器行為就變，所以
 `podman.yml` 在所有 host 上都寫 drop-in，不只在 WSL 蓋掉。
 
-**WSL2 上 nftables driver 實測會壞。** 症狀：容器卡在 `Created`，或 `netavark: nftables
-error: "nft" did not return successfully`。**只有自建 bridge network 才炸**（`podman
-network create` + `--network`）——`podman run` 走 pasta 預設網路不碰防火牆規則所以正常，
-「`podman run` 全綠但一接自建網路就爆」是標準失敗形狀。解法是 `podman_firewall_driver`
-在 WSL 上設 `iptables`（**現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，
-不是 legacy xtables**）。
+**WSL2 上 nftables driver 會壞 —— 2026-07-27 在 podman 5.7.0 / netavark 1.16.1 /
+Ubuntu 26.04 / kernel 6.6.87.2 重新實測，仍然壞。** 失敗簽章非常明確：
 
-**但別把原因記成「WSL kernel 不支援 nftables」——那是錯的。** 2026-07 實測該 kernel
-（6.6.87.2-microsoft-standard-WSL2）`CONFIG_NF_TABLES=y`、`NF_TABLES_INET/IPV4/IPV6=y`、
-`NFT_NAT=y`、`NFT_MASQ=y` 全是 builtin，`nft_ct` / `nft_fib` / `nft_compat` 等模組檔案也
-都在 `/lib/modules/$(uname -r)`（共 924 個模組）。而且錯誤訊息是「`nft` 有跑但回非零」，
-不是找不到執行檔。**真正的失敗點還沒查到**，推測在 rootless netns 裡套用 ruleset 那層。
-要重驗就把 driver 改成 nftables、`podman network rm` 重建網路後起一個容器測。
+```
+[INFO  netavark::firewall::nft] Creating container chain nv_<hash>_10_89_0_0_nm24
+internal:0:0-0: Error: Could not process rule: No such file or directory
+internal:0:0-0: Error: Could not process rule: No such file or directory
+Error: netavark: nftables error: "nft" did not return successfully while applying ruleset
+```
+
+**全新 network、第一個容器就炸**（不是狀態累積），且**只有自建 bridge network 才炸**
+——`podman run` 走 pasta 預設網路不碰防火牆規則所以正常，「`podman run` 全綠但一接自建
+網路就爆」是標準失敗形狀。解法是 `podman_firewall_driver` 在 WSL 上設 `iptables`
+（**現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，不是 legacy xtables**）。
+同日以 iptables driver 實測，五個場景全通過：容器取得 IP、aardvark 容器名 DNS、
+masquerade 對外連線、`-p` 埠發佈、背景容器。
+
+**別把原因記成「WSL kernel 不支援 nftables」——那是錯的，已用實驗排除。** 在
+`unshare -Urn --map-root-user`（rootless podman 完全相同的權限形狀）裡、從冷模組狀態
+（起始只載入 `ip_tables`）、用 netavark 實際走的 `nft -j` JSON 介面，成功套用了
+inet table + nat postrouting/prerouting hook + `masquerade` + `ct state established,related`
++ `meta mark` + `dnat` + `counter`，而且 `nft_ct.ko` 自動載入成功。kernel 側
+`CONFIG_NF_TABLES=y`、`NF_TABLES_INET/IPV4/IPV6=y`、`NFT_NAT=y`、`NFT_MASQ=y` 都是
+builtin，模組目錄有 924 個模組。**也排除了「缺 `nft_counter`」**（該模組確實不存在，
+但 `counter` 表達式實測可用）。
+
+**所以：現象確定、根因未明。** 已知失敗發生在 netavark 自己組的 container chain
+ruleset，而不是 kernel 能力或 rootless netns 這一層。`--log-level=trace` 不會印出
+netavark 送給 `nft` 的實際內容，要再往下追得改從 netavark 原始碼或 strace 著手。
+
+**重驗方式**（升級 podman/netavark 後值得再跑一次；通了就能把整個 workaround 連同
+`iptables` 相依一起砍掉）：
+
+```bash
+podman network rm -f fwtest
+printf '[network]\nfirewall_driver = "nftables"\n' \
+  | sudo tee /etc/containers/containers.conf.d/50-firewall-driver.conf
+podman network create fwtest
+podman run --rm --network fwtest docker.io/library/alpine true && echo OK || echo FAIL
+podman network rm -f fwtest && make apply     # 還原
+```
 
 **driver 對應的後端工具要自己裝。** iptables driver 會呼叫 `iptables` 二進位、nftables
 driver 會呼叫 `nft`；前者只在 podman 的 `Suggests`、後者只在 netavark 的 `Recommends`，

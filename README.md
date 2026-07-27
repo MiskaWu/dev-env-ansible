@@ -84,8 +84,20 @@ claude                                   # 首次 OAuth 認證
 git remote set-url origin git@github.com:MiskaWu/dev-env-ansible.git
 ```
 
-驗一下 podman 真的能用：`podman run --rm docker.io/library/hello-world`；要連帶驗
-rootless 網路與 DNS，起一個容器測 `redis-cli ping`。
+驗一下 podman 真的能用。第一條走 pasta 預設網路，第二組才會碰到防火牆規則
+（自建 bridge network 是最容易出問題的路徑）：
+
+```bash
+podman run --rm docker.io/library/alpine true          # 基本
+podman network create t
+podman run -d --name svc --network t docker.io/library/alpine sleep 60
+podman run --rm --network t docker.io/library/alpine getent hosts svc   # 容器名 DNS
+podman run --rm --network t docker.io/library/alpine ping -c1 1.1.1.1   # 對外
+podman rm -f svc && podman network rm t
+```
+
+（2026-07-27 在 podman 5.7.0 / WSL2 實測全數通過 —— 前提是 firewall driver 為
+`iptables`，見下方與 CLAUDE.md。）
 
 ## 之後更新（day-2，不砍重建）
 
