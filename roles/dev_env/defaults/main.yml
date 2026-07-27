@@ -13,7 +13,6 @@
 # 以及編譯工具鏈（不是「敲的工具」而是別人的前置，見 install_build_tools）。
 # 設成 [] 就只剩 core packages。
 dev_env_packages:
-  - ripgrep                # rg：尊重 .gitignore 的遞迴搜尋
   - unzip                  # 不少 release 只出 zip
   - lazygit                # git 的 TUI；universe 的版本跟上游同代
 
@@ -24,6 +23,10 @@ dev_env_packages:
 # 2026-07-27 **升格**（不是移除）：jq 搬進 base.yml 的 core packages —— 它不只是「順手的
 # 小工具」，Claude Code 官方 installer 解 manifest checksum 的首選路徑就是它，理由與實測
 # 數字寫在 base.yml 的註解。**所以設 dev_env_packages: [] 之後 jq 仍然會裝**。
+# 2026-07-27 移除：ripgrep —— 同一輪調查的另一半結論。它一度看起來跟 jq 同級（是 Claude
+# Code 會 `command -v` 找的四個工具之一），但實測證明 Claude 不需要系統這支：native
+# binary 內嵌了 rg。證據與實驗方法在 CLAUDE.md。剩下的理由只有「自己在 shell 敲 rg」，
+# 而使用者用不太到 —— 所以不裝。要它回來就在這裡加一行。
 
 # ---- 個人選裝：toolchain ----------------------------------------------------
 # 這幾個不是一句 apt 就完事（要查版本 / 抓 tarball / 跑官方 installer，或屬於別人的

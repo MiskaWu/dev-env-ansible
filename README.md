@@ -70,7 +70,7 @@ make list     # 每一項會不會裝、由哪個開關控制、可用的 tag
 
 ```
   ✓ base     core 套件（Claude installer 與這個 repo 的最低相依）— 無開關，清單見 base.yml
-  ✓ base     CLI 工具 — dev_env_packages = ripgrep, unzip, lazygit
+  ✓ base     CLI 工具 — dev_env_packages = unzip, lazygit
   ✓ base     build-essential（Go cgo / uv C extension 的前置）— install_build_tools = True
   ✓ claude   Claude Code — 無開關，這個 repo 的存在理由
   ✓ podman   rootless Podman（firewall driver: iptables） — container_runtime = podman
@@ -182,7 +182,7 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 
 | 變數 | 預設 | 控制 |
 |---|---|---|
-| `dev_env_packages` | ripgrep, unzip, lazygit | 日常會敲的 apt 小工具；設 `[]` 就只剩 core（`jq` 是 core，不受影響） |
+| `dev_env_packages` | unzip, lazygit | 日常會敲的 apt 小工具；設 `[]` 就只剩 core（`jq` 是 core，不受影響） |
 | `install_build_tools` | 跟著 `install_go` / `install_python` 走（任一開著就裝） | `build-essential`（Go 的 cgo、uv 的 C extension 前置）。兩個 toolchain 都關掉時不裝；要單獨拿編譯器就明確設 `true` |
 | `install_go` | `true` | Go toolchain（連帶 `~/.profile` 的 Go PATH 與 `GOTOOLCHAIN`） |
 | `go_version` | `latest` | `latest` **每次 apply 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
