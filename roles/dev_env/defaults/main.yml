@@ -3,33 +3,22 @@
 
 # ---- 容器 runtime ----
 container_runtime: podman          # 目前 role 只實作 podman 路徑
-compose_shim: true                 # 裝 docker-compose 二進位 + DOCKER_HOST
-# pin 版本：get_url 看到 dest 已存在就不重抓，用 releases/latest/download 等於凍在
-# 「初次安裝當下的版本」——既不是 latest 也不是可控的 pin。
-compose_version: "5.3.1"
 
 # netavark 的 firewall driver。空字串 = 不寫 drop-in，用 netavark 預設（nftables）。
-# WSL2 kernel 上 nftables driver 會壞掉（compose 的 bridge network 全滅），故改走
-# iptables（實際是 iptables-nft 相容層）。這裡引用 detect.yml 設的 is_wsl —— Ansible
-# 變數是延遲求值，podman.yml 用到時 is_wsl 已經存在。
+# WSL2 kernel 上 nftables driver 會壞掉（自建 bridge network 全滅），故改走 iptables
+# （實際是 iptables-nft 相容層）。這裡引用 detect.yml 設的 is_wsl —— Ansible 變數是
+# 延遲求值，podman.yml 用到時 is_wsl 已經存在。
 podman_firewall_driver: "{{ 'iptables' if is_wsl else '' }}"
 
 # ---- Go（寫死必裝，只選版本）----
 # 「每個專案不同 Go 版本」不需要版本管理器：Go 1.21+ 預設 GOTOOLCHAIN=auto，go.mod
 # 要求更新的版本時 go 指令會自動下載並改用對應 toolchain。這裡只裝一個 bootstrap Go。
+# 注意 latest 表示「每次 apply 都查 go.dev」，Go 會跟著上游走版。要凍住就 pin 版本。
 go_version: latest                 # 'latest' 查 go.dev，或 pin 如 '1.26.5'
 
 # ---- 可選 toolchain ----
-# Node 走 nodejs.org 官方 tarball，不用 nvm：nvm 是 shell function 且只寫 ~/.bashrc，
-# 非互動 shell（wsl -d dev -e、cron、IDE）拿不到 node。也不用 apt —— Ubuntu 的
-# nodejs 套件不含 npm，而 apt 的 npm 停在 9.2.0 且會拖進約 70 個 node-* 套件。
-# 官方 tarball 附帶版本相符的 npm 與 corepack。
-install_node: false
-node_version: "26.5.0"             # 明確 pin；要換版就改這裡
-
 install_python: true               # uv（uv 自己也管 Python 版本：uv python install）
-install_clients: true              # psql, redis-cli, nats
-nats_version: "0.4.0"
+install_clients: true              # psql, redis-cli
 
 # 註：SSH key 與 git 身分不在這個 role —— 由 wsl-bootstrap 的 provision.sh 在 bring-up 就
 # 備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。設定在 config.ps1。
