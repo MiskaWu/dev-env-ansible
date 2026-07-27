@@ -30,8 +30,17 @@
   `claude -p "<用 Grep 搜某個字串>" --allowedTools Grep`（只給 Grep、不給 Bash，逼它走
   內建搜尋路徑）—— **命中目標、零錯誤**。所以系統上沒有 rg 也不影響 Claude。
   剩下的理由只有「自己在 shell 敲 `rg`」，使用者用不太到，就不裝了。
-  **副作用要知道**：新機器上 Bash 裡直接敲 `rg` 會 command not found（改用 Grep 工具
-  或 `grep -r`）；已經裝了 rg 的機器不受影響 —— 這個 role 只裝不卸。
+  **副作用比想像小（2026-07-27 追加實測，修正了本條原本的說法）**：Claude **自己的
+  Bash 工具裡仍然有 `rg`**。偵測到 PATH 上沒有時，它會在 shell snapshot 注入一個 `rg`
+  function（binary 裡那段 heredoc 的結束標記就叫 `RIPGREP_FUNC_END`），內容是
+  `( exec -a rg "$_cc_bin" "$@" )` —— 拿 **claude 二進位自己**當 ripgrep 跑，靠 argv[0]
+  分流，busybox 那種 multi-call binary 的作法。所以真正少掉的只有**你自己互動 shell
+  裡的 `rg`**；已經裝了的機器完全不受影響（只裝不卸）。
+  **`USE_BUILTIN_RIPGREP=0` 在這裡沒有用**，別被網路文章誤導：那個變數宣稱能改用系統
+  rg（少一層 Node wrapper、更快），但上游 [issue #6415](https://github.com/anthropics/claude-code/issues/6415)
+  記錄 Grep 工具直接忽略它，本機實測也一樣 —— 設成 `0` 且 PATH 無 rg，搜尋照樣成功。
+  另注意網路上談的多半是 **npm 版**（`@vscode/ripgrep`，rg 是 vendor 目錄裡的獨立檔案），
+  跟我們用的 native binary 形狀不同，別把那邊的結論直接搬過來。
   **這組對照就是這條規則的範本**：兩個工具都被 Claude「用到」，但 jq 是外部相依
   （installer 是 shell script，沒辦法內嵌），rg 是自帶。要往 core 加東西就查到這個
   程度為止 —— 「Claude 會用到」不等於「Claude 需要系統上有」。
