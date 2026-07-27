@@ -42,6 +42,8 @@
   become: true
   ansible.builtin.apt:
     name: "{{ 'iptables' if podman_firewall_driver == 'iptables' else 'nftables' }}"
+    update_cache: true
+    cache_valid_time: 3600
   when: podman_firewall_driver in ['iptables', 'nftables']
 
 - name: Ensure containers.conf.d exists
@@ -66,8 +68,9 @@
     state: absent
   when: podman_firewall_driver | length == 0
 
-# Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats
-# → `podman pull postgres` 直接失敗。這是 Ubuntu-general，不 gate 在 is_wsl。
+# Ubuntu 出貨的 registries.conf 是全註解樣板（生效的搜尋清單是空的），內建 short-name
+# 別名表也沒有 postgres/redis/nats → `podman pull postgres` 直接失敗。
+# 這是 Ubuntu-general，不 gate 在 is_wsl。
 - name: Ensure registries.conf.d exists
   become: true
   ansible.builtin.file:
@@ -87,22 +90,29 @@
 # 後那兩個主檔是舊版殘留，留著會蓋掉 drop-in 的語意（特別是非 WSL 機器上殘留的
 # firewall_driver = iptables）。只在「該檔不屬於任何套件」時才移除，避免將來
 # containers-common 開始出貨這些檔案時誤刪。
+#
+# **一個檔查一次，不要一次餵兩個路徑給 dpkg -S。** dpkg -S 只要其中**任一個**路徑不屬於
+# 套件就回非零（實測 rc=1），所以合查一次的話，「A 屬於套件、B 不屬於」會被判成「兩個都
+# 不屬於」，然後把 A 一起刪掉 —— 正好是上面那句註解想避免的事。逐檔查、逐檔判。
 - name: Check whether /etc/containers main configs are package-owned
-  ansible.builtin.command: dpkg -S /etc/containers/containers.conf /etc/containers/registries.conf
+  ansible.builtin.command: "dpkg -S /etc/containers/{{ item }}"
   register: _containers_conf_owner
   changed_when: false
   failed_when: false
   check_mode: false
+  loop:
+    - containers.conf
+    - registries.conf
 
 - name: Remove legacy whole-file configs superseded by drop-ins
   become: true
   ansible.builtin.file:
-    path: "/etc/containers/{{ item }}"
+    path: "/etc/containers/{{ item.item }}"
     state: absent
-  loop:
-    - containers.conf
-    - registries.conf
-  when: _containers_conf_owner.rc != 0
+  loop: "{{ _containers_conf_owner.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0
 
 # --- WSL2-only：mount propagation --------------------------------------------
 # WSL 的 `/` 是 private mount propagation（正常 systemd 系統開機時會把根設成 shared，
@@ -119,14 +129,21 @@
   when: is_wsl
   register: _rshared_unit
 
+# enabled 之外還要 started：只 enable 的話，unit 要等**下一次開機**才跑，於是「apply 完
+# 但還沒 wsl --shutdown」這段期間 `/` 仍是 private，rootless podman 照樣吃到 shared-mount
+# 警告（實測過這個空窗）。`mount --make-rshared /` 本身冪等、線上跑也安全（正常 systemd
+# 開機做的就是這件事），unit 又有 RemainAfterExit=yes，所以 systemd 會把它記成 active、
+# 重跑 apply 不會再動 —— 直接 started 沒有代價。
+#
 # check mode 下 unit 檔沒有真的寫出去，systemd 找不到它會讓整個 dry-run 中止
 # （`Could not find the requested service`）。那是 check mode 的假陽性，不是真錯誤，
 # 所以「check mode 且 unit 這次才會被建出來」時跳過。
-- name: WSL — enable rshared-root.service
+- name: WSL — enable and start rshared-root.service
   become: true
   ansible.builtin.systemd_service:
     name: rshared-root.service
     enabled: true
+    state: started
     daemon_reload: "{{ _rshared_unit is changed }}"
   when:
     - is_wsl
