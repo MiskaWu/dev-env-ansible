@@ -35,10 +35,19 @@
 - **facts 已經有的別再 shell 出去拿**：`ansible_facts.user_uid` / `.user_id` 就是「ansible
   實際連進去的那個 user」，不用另外跑 `id -u`（少一個 task，也少一個 `check_mode: false` 例外）。
 - **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+  但**`creates:` 只解決冪等，不解決失敗偵測**——它在**執行前**檢查、事後不驗，所以
+  `curl … | bash` 還必須自己 `set -o pipefail` + `executable: /bin/bash`（Ubuntu 的
+  `/bin/sh` 是 dash，沒有 pipefail）。少了它，curl 失敗時 bash 收到空輸入乾淨結束、
+  pipeline 回 0 → **task 綠燈但 binary 不存在**，而且因為 `creates` 事後不檢查，這個失敗
+  會一路靜默到下次有人真的要用。2026-07 review 時 `claude.yml` / `python.yml` 都有這個洞。
 - **驗證指令別把 exit code 洗掉**：`if cmd | grep x | sed …; then` 的成敗取決於 pipeline
   的**最後一個**指令，而 `sed` 永遠回 0 —— 失敗會被判成成功。2026-07 驗 podman 網路時就
   這樣做出一次假陽性，差點把「其實還壞著」的 WSL workaround 拿掉。要判成敗就
   `out=$(cmd 2>&1)` 之後對 `$out` 檢查，或加 `set -o pipefail`。
+- **`dpkg -S` 要一個檔查一次，不要一次餵多個路徑。** 只要其中**任一個**路徑不屬於任何套件，
+  整個指令就回非零（實測 `rc=1`），所以合查會把「A 屬於套件、B 不屬於」判成「兩個都不屬於」。
+  拿它當「刪檔」的 gate 時這個誤判會直接刪掉屬於套件的檔案 —— 要 loop 逐檔查、逐檔判
+  （`podman.yml` 清舊版 `containers.conf` / `registries.conf` 那段就是）。2026-07 review 抓到。
 - **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
   python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
   沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。另外兩條配套規則：
@@ -167,9 +176,21 @@ driver 會呼叫 `nft`；前者只在 podman 的 `Suggests`、後者只在 netav
 `create firewall-driver file` / `read firewall-driver`），改了設定要 `podman network rm`
 重建、或整台重開才會完全乾淨。
 
-**Ubuntu 完全不出貨 `/etc/containers/registries.conf`**，內建 short-name 別名表也沒有
+**Ubuntu 的 `/etc/containers/registries.conf` 是一份「全註解」的樣板，沒有任何生效設定。**
+（2026-07-27 更正：這條原本寫「Ubuntu 完全不出貨」，那是錯的 —— `golang-github-containers-image`
+5.38.0 確實出貨這個檔，而且是 conffile；實機看不到它是因為被 role 自己刪掉了，見下。從 .deb
+解出來看過：唯一那行 `unqualified-search-registries` 是**被註解掉的** `# … ["example.com"]`。）
+所以結論不變：實際生效的 unqualified search 清單是空的，內建 short-name 別名表也沒有
 `postgres`/`redis`/`nats` → `podman pull postgres` 直接失敗（fail fast，不卡 TTY）。
 寫在 `/etc/containers/registries.conf.d/50-unqualified-search.conf`。Ubuntu-general，不 gate。
+
+**別刪 `/etc/containers/registries.conf` —— 它是別人的 conffile。** `podman.yml` 清舊版整檔
+設定的那段，2026-07-27 之前用 `dpkg -S <兩個路徑>` 一次查、rc 非零就兩個一起刪；因為
+`containers.conf` 無主（rc=1）而 `registries.conf` 有主（rc=0），合查回 1 → **把有主的那個
+一起刪了**。實機上這件事已經發生過：同一次 apply 在 17:42:47 裝進
+`golang-github-containers-image`、17:43 就把它的 conffile 刪掉。後果不嚴重（那份檔沒有生效
+設定，drop-in 也照樣管用），但每次該套件升級 dpkg 會把 conffile 補回來、role 又刪一次，
+變成無止境的來回。改成逐檔查、逐檔判之後 `registries.conf` 會被正確跳過。
 
 **podman 幾個關鍵相依在 Ubuntu 上只是 `Recommends`，要明確寫進套件清單。** `uidmap`
 （rootless 的 uid 映射，沒有它 rootless 完全不能用）、`passt`（提供 pasta，podman 5 的
