@@ -1,5 +1,6 @@
 # {{ ansible_managed }}
-# Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats，
-# 沒有這個檔 `podman pull postgres` 會直接失敗。
+# Ubuntu 出貨的 registries.conf 是一份全註解的樣板（連 unqualified-search-registries 那行
+# 也是註解掉的），所以生效的搜尋清單是空的；內建 short-name 別名表又沒有 postgres/redis/
+# nats，沒有這個檔 `podman pull postgres` 會直接失敗。
 unqualified-search-registries = ["docker.io"]
 short-name-mode = "disabled"
