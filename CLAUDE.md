@@ -17,8 +17,8 @@
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
 - **Makefile `?=` 後面不要接行內 `# 註解`**：make 會把「值到 `#` 之間的空白」算進變數值
-  （`SSH_TAG ?= dev  # x` → `"dev  "`；`LOCAL ?= 1  # x` → `"1  "`，`$(filter 1,…)` 就對不上、
-  `LOCAL=1` 預設靜默失效，`ssh-keys` 的 glob 也會抓錯路徑）。註解一律另起一行。2026-07 踩過。
+  （`LOCAL ?= 1  # x` → `"1  "`，`$(filter 1,…)` 就對不上、`LOCAL=1` 預設靜默失效，
+  變成走 inventory 而不是 localhost）。註解一律另起一行。2026-07 踩過。
 - 註解 / commit 訊息 / README 都用繁體中文（2026-07 起 README 也改繁中）。
 
 ## 已知地雷（軟體 / WSL 層，2026-07 踩過）
