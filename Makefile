@@ -12,8 +12,9 @@ MAKEFLAGS += --no-builtin-rules
 INVENTORY ?= inventory/hosts.yml
 PLAYBOOK  ?= site.yml
 # TAGS：只裝某些 tag，例 `make apply TAGS=python`
-# 可用：base podman go claude python clients profile
+# 可用：base podman go claude python profile
 # 注意 ansible 對不存在的 tag 不報錯、只會什麼都不做 —— 打錯字是靜默失敗
+# （所以這一列必須跟 tasks/main.yml 的 tags 同步；clients 那個 tag 已隨 clients.yml 移除）
 TAGS      ?=
 LIMIT     ?=
 # LOCAL=1：對本機 localhost 跑（在 distro 內用就對了）；控制節點模式設 LOCAL=0
