@@ -3,20 +3,15 @@
 - name: Detect environment
   ansible.builtin.set_fact:
     is_wsl: "{{ ('microsoft' in ansible_facts.kernel | lower) or ('wsl' in ansible_facts.kernel | lower) }}"
-    go_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+    # Debian 風格的架構名（amd64 / arm64）：Go tarball 與 nats .deb 都用這個拼法。
+    # docker-compose 用的是 x86_64 / aarch64，直接引用 ansible_facts.architecture。
+    dev_env_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
 
-- name: Get login uid
-  ansible.builtin.command: id -u
-  changed_when: false
-  check_mode: false          # 唯讀，check mode 也要跑，否則 login_uid 會 undefined
-  register: _login_uid
-
-- name: Set uid fact
-  ansible.builtin.set_fact:
-    login_uid: "{{ _login_uid.stdout }}"
-
+# uid / user 不另外跑 `id -u` —— gather_facts 已經給了 ansible_facts.user_uid 與
+# ansible_facts.user_id，兩者都是「ansible 實際連進去的那個 user」，正是我們要的。
 - name: Environment summary
   ansible.builtin.debug:
     msg: >-
       host={{ inventory_hostname }} kernel={{ ansible_facts.kernel }}
-      arch={{ ansible_facts.architecture }} is_wsl={{ is_wsl }} uid={{ login_uid }}
+      arch={{ ansible_facts.architecture }} is_wsl={{ is_wsl }}
+      user={{ ansible_facts.user_id }} uid={{ ansible_facts.user_uid }}

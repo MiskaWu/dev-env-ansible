@@ -1,0 +1,42 @@
+---
+# 環境變數一律放 ~/.profile，不是 ~/.bashrc —— Ubuntu 預設的 .bashrc 開頭對非互動
+# shell 就 return，寫在那裡的 export（PATH、DOCKER_HOST）`wsl -d dev -e`、腳本、cron
+# 都讀不到。alias 放 .bashrc 沒問題（本來就只對互動有意義）。
+#
+# 收成單一 managed block：以前 go/claude/python/podman 四個 task 檔各自 lineinfile 一行，
+# 邏輯散落且 ~/.local/bin 那行被寫了兩次。集中在這裡，PATH 順序也才控制得住。
+- name: ~/.profile — dev_env managed block
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    create: true
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — dev_env"
+    block: |
+      # PATH 順序有意義：自己裝的排在最前面，才會贏過 WSL 附加到尾端的 Windows 路徑
+      # （/mnt/c/...）。沒有這層保證的話，像 npm 這種 Windows 也有的指令會解析到
+      # Windows 版，在 WSL 裡裝出 Windows 的原生模組。
+      export PATH="$HOME/.local/bin:/usr/local/go/bin:$HOME/go/bin:$PATH"
+      {% if install_node %}
+      export PATH="/usr/local/node/bin:$PATH"
+      {% endif %}
+      # Go 1.21+ 的內建版本切換：go.mod 要求更新的版本時自動下載對應 toolchain。
+      # auto 本來就是預設值，明寫是為了讓「不需要 Go 版本管理器」這件事有據可查，
+      # 同時擋掉別處被設成 local 的可能。
+      export GOTOOLCHAIN=auto
+      {% if container_runtime == 'podman' %}
+      # 給 `podman compose` 與需要 Docker API 的工具（IDE / testcontainers）用。
+      export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+      {% endif %}
+
+# 舊版把這些 export 各自散寫在 .profile，改用 managed block 後是殘留（PATH 會有重複
+# 項、DOCKER_HOST 會被舊行覆蓋）。這些字串跟上面 block 內的寫法刻意不同，所以不會
+# 誤刪 block 自己的內容。
+- name: ~/.profile — 清掉舊版散寫的 export
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    line: "{{ item }}"
+    state: absent
+  loop:
+    - 'export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"'
+    - 'export PATH="$HOME/.local/bin:$PATH"'
+    - 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'

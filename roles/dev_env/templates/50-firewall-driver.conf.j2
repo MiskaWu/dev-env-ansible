@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# netavark 的 firewall driver。預設是 nftables，但那個 driver 在 WSL2 kernel 上失敗
+# （compose 的 bridge network 全部卡在 Created）。iptables 走的是 iptables-nft 相容層。
+[network]
+firewall_driver = "{{ podman_firewall_driver }}"

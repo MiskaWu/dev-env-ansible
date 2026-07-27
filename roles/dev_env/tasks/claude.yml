@@ -1,12 +1,7 @@
 ---
 # creates 保證冪等：已裝就不再跑 installer。
+# ~/.local/bin 的 PATH 由 profile.yml 統一管。
 - name: Install Claude Code (native installer)
   ansible.builtin.shell:
     cmd: curl -fsSL https://claude.ai/install.sh | bash
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
-
-- name: ~/.local/bin on PATH in ~/.profile
-  ansible.builtin.lineinfile:
-    path: "{{ ansible_facts.env.HOME }}/.profile"
-    line: 'export PATH="$HOME/.local/bin:$PATH"'
-    create: true

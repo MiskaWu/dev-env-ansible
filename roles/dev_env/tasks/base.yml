@@ -1,17 +1,19 @@
 ---
+# 刻意保持精簡。已移除 gnupg / lsb-release —— 兩者都只在「加第三方 apt repo」時才需要
+# （gnupg 驗 repo 簽章金鑰、lsb-release 拿 codename 組 sources.list）。現在全走 Ubuntu
+# 內建源 + 官方 installer，沒有第三方 repo。apt 驗官方源用的是相依帶進來的 gpgv，
+# 不是 gnupg，砍掉不影響 apt。
 - name: Install baseline packages
   become: true
   ansible.builtin.apt:
     name:
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
+      - ca-certificates    # CA 根憑證庫；curl / git / go 走 HTTPS 驗對方憑證用
+      - curl               # 官方 installer（claude / uv）靠它
       - git
-      - tmux
-      - ripgrep
-      - jq
-      - unzip
-      - build-essential
+      - tmux               # session 跑背景：WSL 視窗關掉、SSH 斷線，工作還活著
+      - ripgrep            # rg：尊重 .gitignore 的遞迴搜尋
+      - jq                 # JSON 的 sed/awk
+      - unzip              # 不少 release 只出 zip
+      - build-essential    # gcc/g++/make/libc6-dev：cgo、node-gyp、Python C extension
     update_cache: true
     cache_valid_time: 3600

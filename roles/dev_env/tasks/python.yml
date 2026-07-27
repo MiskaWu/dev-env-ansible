@@ -1,11 +1,8 @@
 ---
+# uv 不只是套件管理器，它自己也管 Python 版本（uv python install、讀 .python-version、
+# uv run 遇到缺的版本會自動抓預編譯的 standalone build），所以這個 role 不需要另外裝
+# pyenv 之類的東西。~/.local/bin 的 PATH 由 profile.yml 統一管。
 - name: Install uv
   ansible.builtin.shell:
     cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
-
-- name: ~/.local/bin on PATH in ~/.profile
-  ansible.builtin.lineinfile:
-    path: "{{ ansible_facts.env.HOME }}/.profile"
-    line: 'export PATH="$HOME/.local/bin:$PATH"'
-    create: true
