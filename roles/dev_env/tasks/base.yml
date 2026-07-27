@@ -3,12 +3,30 @@
 #
 #   core packages —— 不裝就沒辦法把這台機器準備起來的東西。無條件裝、沒有開關。
 #                    判準是「Claude Code 的 installer 與取得這個 repo 需要什麼」，
-#                    不是「什麼好用」。三個就到頂了，不要往這裡加東西。
+#                    不是「什麼好用」。四個就到頂了，不要往這裡加東西。
 #   dev_env_packages —— 個人選裝，內容在 defaults/main.yml，改清單就好。
 #
 # 已移除 gnupg / lsb-release —— 兩者都只在「加第三方 apt repo」時才需要（gnupg 驗 repo
 # 簽章金鑰、lsb-release 拿 codename 組 sources.list）。現在全走 Ubuntu 內建源 + 官方
 # installer，沒有第三方 repo。apt 驗官方源用的是相依帶進來的 gpgv，不是 gnupg。
+#
+# jq 是 2026-07-27 從 dev_env_packages 升上來的，兩個理由都是實測來的，不是「好用」：
+#
+#  1. installer 真的會用它。抓下 https://claude.ai/install.sh 看：拿 manifest.json 的
+#     checksum 時分兩條路，有 jq 走 `jq -r .platforms[$platform].checksum`，沒有就退回
+#     `get_checksum_from_manifest()` 用 bash regex 硬解，而那個 regex 靠
+#     `"$platform"[^}]*"checksum"` —— 假設兩個 key 之間不會出現 `}`。上游哪天在 platform
+#     物件裡多包一層，regex 就靜默抓不到 → checksum 為空 → installer 中止，而印出來的是
+#     誤導的 "Platform linux-x64 not found in manifest"（platform 明明在裡面）。
+#     **checksum 驗證兩條路都會做，所以這不是安全問題**，是「上游改格式就炸、且錯誤訊息
+#     看不懂」的問題 —— 跟 podman 那堆 Recommends 是同一類地雷：少了不會當場報錯。
+#     順序上 main.yml 是 base.yml → claude.yml，所以進 core 就保證 installer 跑到時它已在。
+#
+#  2. statusline 這種每次重繪都跑的熱路徑，jq 快一個檔次。同機實測（60 次平均）：
+#     單一 jq 一次抽完 10 個欄位 4.6ms，python3 做同一件事 32.4ms —— 光 interpreter
+#     啟動就吃掉 21.5ms，jq 只要 4.9ms。
+#     注意「7 個 jq pipe 比一個 python3 慢」那個說法是稻草人：7 次 jq 確實要 29.3ms，
+#     但根本不必呼叫 7 次，`jq -r '[...]|@tsv'` 一次就抽完。
 - name: Install core packages
   become: true
   ansible.builtin.apt:
@@ -16,6 +34,7 @@
       - ca-certificates    # CA 根憑證庫；curl / git 走 HTTPS 驗對方憑證用
       - curl               # Claude Code 的官方 installer 靠它
       - git                # 取得這個 repo 與之後 git pull 更新
+      - jq                 # 同上：installer 解 manifest checksum 的首選路徑（見上方註解）
     update_cache: true
     cache_valid_time: 3600
 

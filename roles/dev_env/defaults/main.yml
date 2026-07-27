@@ -14,7 +14,6 @@
 # 設成 [] 就只剩 core packages。
 dev_env_packages:
   - ripgrep                # rg：尊重 .gitignore 的遞迴搜尋
-  - jq                     # JSON 的 sed/awk
   - unzip                  # 不少 release 只出 zip
   - lazygit                # git 的 TUI；universe 的版本跟上游同代
 
@@ -22,6 +21,9 @@ dev_env_packages:
 # （apt 的 state: present 只保證「有」）。要讓某個套件真的從機器上消失是手動的事
 # ——刻意如此，卸載是破壞性動作，不該每次 apply 都自動跑一遍。
 # 2026-07 移除的：postgresql-client / redis-tools（改用 podman run 跑 client）。
+# 2026-07-27 **升格**（不是移除）：jq 搬進 base.yml 的 core packages —— 它不只是「順手的
+# 小工具」，Claude Code 官方 installer 解 manifest checksum 的首選路徑就是它，理由與實測
+# 數字寫在 base.yml 的註解。**所以設 dev_env_packages: [] 之後 jq 仍然會裝**。
 
 # ---- 個人選裝：toolchain ----------------------------------------------------
 # 這幾個不是一句 apt 就完事（要查版本 / 抓 tarball / 跑官方 installer，或屬於別人的
