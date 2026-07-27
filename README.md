@@ -145,7 +145,7 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 | 變數 | 預設 | 控制 |
 |---|---|---|
 | `dev_env_packages` | ripgrep, jq, unzip, lazygit | 日常會敲的 apt 小工具；設 `[]` 就只剩 core |
-| `install_build_tools` | `true` | `build-essential`（Go 的 cgo、uv 的 C extension 前置） |
+| `install_build_tools` | 跟著 `install_go` / `install_python` 走（任一開著就裝） | `build-essential`（Go 的 cgo、uv 的 C extension 前置）。兩個 toolchain 都關掉時不裝；要單獨拿編譯器就明確設 `true` |
 | `install_go` | `true` | Go toolchain（連帶 `~/.profile` 的 Go PATH 與 `GOTOOLCHAIN`） |
 | `go_version` | `latest` | `latest` **每次 apply 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
 | `install_python` | `true` | uv |
