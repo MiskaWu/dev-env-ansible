@@ -23,14 +23,26 @@
     cache_valid_time: 3600
 
 # --- netavark firewall driver -------------------------------------------------
-# netavark 預設走 nftables（它的 Recommends 就是 nftables），但那個 driver 在 WSL2
-# kernel 上失敗，會弄壞每一個自建 bridge network。改用 iptables driver ——
-# 注意現代 Ubuntu 的 iptables 套件裝的其實是 iptables-nft 相容層，不是 legacy xtables。
-- name: Install iptables (netavark firewall driver)
+# 這一段一律明寫 driver，不吃發行版預設（理由見 defaults/main.yml 的長註解：netavark
+# 的預設是編譯期決定的，換發行版就可能不同）。
+- name: Validate podman_firewall_driver
+  ansible.builtin.assert:
+    that: podman_firewall_driver in ['', 'iptables', 'nftables', 'firewalld', 'none']
+    fail_msg: >-
+      podman_firewall_driver = '{{ podman_firewall_driver }}' 不是 netavark 認得的值。
+      可用：iptables / nftables / firewalld / none，或 '' 表示不管（用發行版預設）。
+    quiet: true
+
+# driver 對應的後端工具要自己裝：netavark 的 iptables driver 會去呼叫 iptables 二進位、
+# nftables driver 會去呼叫 nft。兩者在 Ubuntu 上都不是硬相依（iptables 只在 podman 的
+# Suggests、nftables 只在 netavark 的 Recommends），少了不會在安裝階段報錯，而是等到
+# 「起第一個接自建 bridge network 的容器」時才爆。跟 passt / aardvark-dns 同一類陷阱。
+# 註：現代 Ubuntu 的 iptables 套件裝的其實是 iptables-nft 相容層，不是 legacy xtables。
+- name: Install netavark firewall backend ({{ podman_firewall_driver }})
   become: true
   ansible.builtin.apt:
-    name: iptables
-  when: podman_firewall_driver == 'iptables'
+    name: "{{ 'iptables' if podman_firewall_driver == 'iptables' else 'nftables' }}"
+  when: podman_firewall_driver in ['iptables', 'nftables']
 
 - name: Ensure containers.conf.d exists
   become: true

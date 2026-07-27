@@ -77,17 +77,35 @@ has been removed` **整個 run 開頭中止、什麼都沒裝**。更陰險：`m
 （背景任務 / wsl.exe）可能把 exit code 誤報成 0，看起來「成功」實則沒做事。要 yaml 輸出用
 default callback 的 `result_format`，別用舊 callback。
 
-**netavark 預設 nftables driver 在 WSL2 kernel 上失敗。** 症狀：容器卡在 `Created`，或
-`netavark: nftables error: "nft" did not return successfully`。**只在 WSL**，且**只有
-自建 bridge network 才炸**（`podman network create` + `--network`，或任何 compose 工具）
-——`podman run` 走 pasta 預設網路不碰防火牆規則所以正常，所以「`podman run` 全綠但一接
-自建網路就爆」是標準失敗形狀。
-解法：裝 `iptables`（**注意現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，
-不是 legacy xtables**）+ 寫 `/etc/containers/containers.conf.d/50-firewall-driver.conf` 的
-`firewall_driver = "iptables"`。由 `podman_firewall_driver` 變數控制（WSL 上預設
-`iptables`，空字串 = 不寫 drop-in、用 netavark 預設）。**這條是 2026-07 在較舊的 podman
-上驗的，現在的 Ubuntu 26.04 是 podman 5.7 / netavark 1.16 —— 上游可能已修，值得重驗一次
-再決定要不要把這個 workaround 拿掉。**
+**netavark 的 firewall driver 一律明寫，不要吃發行版預設。** netavark 的預設是**編譯期**
+決定的（上游 `src/firewall/mod.rs` 的 `#[cfg(default_fw = ...)]`；runtime 偵測 firewalld
+那段在上游是被註解掉的），所以**同一版 netavark 在不同發行版預設可能不同**——Ubuntu 26.04
+的 netavark 1.16.1 實測 `default_fw_driver = nftables`（`netavark version` 會直接印出來），
+Debian changelog 也兩次寫明「Default to nftables, again」。吃預設 = 換台機器行為就變，所以
+`podman.yml` 在所有 host 上都寫 drop-in，不只在 WSL 蓋掉。
+
+**WSL2 上 nftables driver 實測會壞。** 症狀：容器卡在 `Created`，或 `netavark: nftables
+error: "nft" did not return successfully`。**只有自建 bridge network 才炸**（`podman
+network create` + `--network`）——`podman run` 走 pasta 預設網路不碰防火牆規則所以正常，
+「`podman run` 全綠但一接自建網路就爆」是標準失敗形狀。解法是 `podman_firewall_driver`
+在 WSL 上設 `iptables`（**現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，
+不是 legacy xtables**）。
+
+**但別把原因記成「WSL kernel 不支援 nftables」——那是錯的。** 2026-07 實測該 kernel
+（6.6.87.2-microsoft-standard-WSL2）`CONFIG_NF_TABLES=y`、`NF_TABLES_INET/IPV4/IPV6=y`、
+`NFT_NAT=y`、`NFT_MASQ=y` 全是 builtin，`nft_ct` / `nft_fib` / `nft_compat` 等模組檔案也
+都在 `/lib/modules/$(uname -r)`（共 924 個模組）。而且錯誤訊息是「`nft` 有跑但回非零」，
+不是找不到執行檔。**真正的失敗點還沒查到**，推測在 rootless netns 裡套用 ruleset 那層。
+要重驗就把 driver 改成 nftables、`podman network rm` 重建網路後起一個容器測。
+
+**driver 對應的後端工具要自己裝。** iptables driver 會呼叫 `iptables` 二進位、nftables
+driver 會呼叫 `nft`；前者只在 podman 的 `Suggests`、後者只在 netavark 的 `Recommends`，
+少了**不會在安裝階段報錯**，而是等到起第一個接自建網路的容器時才爆。跟下面 `passt` /
+`aardvark-dns` 是同一類陷阱。
+
+**換 driver 不影響既有 network。** netavark 把 driver 記在每個 network 上（二進位裡有
+`create firewall-driver file` / `read firewall-driver`），改了設定要 `podman network rm`
+重建、或整台重開才會完全乾淨。
 
 **Ubuntu 完全不出貨 `/etc/containers/registries.conf`**，內建 short-name 別名表也沒有
 `postgres`/`redis`/`nats` → `podman pull postgres` 直接失敗（fail fast，不卡 TTY）。

@@ -49,11 +49,19 @@ install_python: true
 # profile.yml 的 DOCKER_HOST 也會一起不寫。目前只實作 podman 路徑。
 container_runtime: podman
 
-# netavark 的 firewall driver。空字串 = 不寫 drop-in，用 netavark 預設（nftables）。
-# WSL2 kernel 上 nftables driver 會壞掉（自建 bridge network 全滅），故改走 iptables
-# （實際是 iptables-nft 相容層）。這裡引用 detect.yml 設的 is_wsl —— Ansible 變數是
-# 延遲求值，podman.yml 用到時 is_wsl 已經存在。
-podman_firewall_driver: "{{ 'iptables' if is_wsl else '' }}"
+# netavark 的 firewall driver —— **一律明寫，不吃發行版預設**。
+#
+# 為什麼不吃預設：netavark 的預設是「編譯期」決定的（上游 src/firewall/mod.rs 用
+# `#[cfg(default_fw = ...)]`，runtime 偵測 firewalld 那段是被註解掉的），所以同一版
+# netavark 在不同發行版預設可能不同。Ubuntu 26.04 的 netavark 1.16.1 實測是 nftables
+# （`netavark version` 會直接印 `default_fw_driver`），Debian changelog 也兩次寫明
+# 「Default to nftables, again」。依賴這種東西 = 換台機器行為就變。
+#
+# WSL2 上 nftables driver 會壞（自建 bridge network 的容器全部卡在 Created），故走
+# iptables；其他 host 用 nftables（發行版的方向，批次下規則較快，也不必裝 iptables）。
+# 可用值：iptables / nftables / firewalld / none，或 '' 表示「完全不管，用發行版預設」。
+# 這裡引用 detect.yml 設的 is_wsl —— Ansible 變數延遲求值，podman.yml 用到時已經存在。
+podman_firewall_driver: "{{ 'iptables' if is_wsl else 'nftables' }}"
 
 # 註：SSH key 與 git 身分不在這個 role —— 由 wsl-bootstrap 的 provision.sh 在 bring-up 就
 # 備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。設定在 config.ps1。
