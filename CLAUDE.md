@@ -7,12 +7,22 @@
 
 ## 慣例
 
-- **`is_wsl` gate**：只在 WSL 成立的 task（netavark→iptables、containers.conf）放
+- **`is_wsl` gate**：只在 WSL 成立的 task（netavark firewall driver、rshared-root unit）放
   `when: is_wsl`。`detect.yml` 用 `ansible_facts.kernel` 判。跨用的關鍵，別拿掉。
 - **fact 一律用 `ansible_facts.*`**（`ansible_facts.env.HOME`、`.date_time.date`…），不用
   top-level `ansible_env` / `ansible_date_time`——後者 `INJECT_FACTS_AS_VARS` 會在
   ansible-core 2.24 移除，用了會噴 deprecation。
-- **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+- **facts 已經有的別再 shell 出去拿**：`ansible_facts.user_uid` / `.user_id` 就是「ansible
+  實際連進去的那個 user」，不用另外跑 `id -u`（少一個 task，也少一個 `check_mode: false` 例外）。
+- **冪等**：`curl|bash` 類用 `creates:`；Go / Node 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+- **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
+  python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
+  沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。
+- **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
+  `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
+- **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
+  Python 靠 uv，兩者都不需要外部工具；Node 目前鎖單一版本。要推翻這個決定前先看 README
+  的「版本管理」段，那裡有完整理由與各方案的取捨。
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
@@ -39,16 +49,48 @@ default callback 的 `result_format`，別用舊 callback。
 卡在 `Created`，或 `netavark: nftables error: "nft" did not return successfully`。**只在
 WSL**，且**只有自建 bridge network（compose 一定會）才炸**——`podman run` 走 pasta 預設
 網路不碰防火牆規則所以正常，所以「`podman run` 全綠但 compose 全爆」是標準失敗形狀。
-解法：裝 `iptables` + 寫 `/etc/containers/containers.conf` `firewall_driver = "iptables"`
-（`podman.yml` 的 `when: is_wsl` task）。
+解法：裝 `iptables`（**注意現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，
+不是 legacy xtables**）+ 寫 `/etc/containers/containers.conf.d/50-firewall-driver.conf` 的
+`firewall_driver = "iptables"`。由 `podman_firewall_driver` 變數控制（WSL 上預設
+`iptables`，空字串 = 不寫 drop-in、用 netavark 預設）。**這條是 2026-07 在較舊的 podman
+上驗的，現在的 Ubuntu 26.04 是 podman 5.7 / netavark 1.16 —— 上游可能已修，值得重驗一次
+再決定要不要把這個 workaround 拿掉。**
 
 **Ubuntu 完全不出貨 `/etc/containers/registries.conf`**，內建 short-name 別名表也沒有
 `postgres`/`redis`/`nats` → `podman pull postgres` 直接失敗（fail fast，不卡 TTY）。
-`podman.yml` 寫 `unqualified-search-registries = ["docker.io"]`。這是 Ubuntu-general，不 gate。
+寫在 `/etc/containers/registries.conf.d/50-unqualified-search.conf`。Ubuntu-general，不 gate。
+
+**podman 幾個關鍵相依在 Ubuntu 上只是 `Recommends`，要明確寫進套件清單。** `uidmap`
+（rootless 的 uid 映射，沒有它 rootless 完全不能用）、`passt`（提供 pasta，podman 5 的
+**預設** rootless 網路後端）、`dbus-user-session`（systemd `--user` 的 D-Bus 整合，rootless
+`podman.socket` 要）都只是 podman 的 Recommends；**`aardvark-dns` 更隱蔽——它是 `netavark`
+的 Recommends**，負責 bridge network 裡的容器名解析，也就是 compose 裡 `app` 連
+`postgres:5432` 靠的東西。apt 預設會裝 Recommends 所以平常看不出問題，但只要誰用
+`--no-install-recommends`、或換個 base image，就會靜默壞掉。不該碰運氣。
+（反過來，`buildah` / `skopeo` / `slirp4netns` / `fuse-overlayfs` 是舊清單的贅肉，2026-07
+砍掉：前兩個 podman 已內建等價功能，slirp4netns 被 pasta 取代，fuse-overlayfs 在
+kernel 5.11+ 的 rootless 下可直接用 native overlay。）
 
 **環境變數放 `~/.profile`，不是 `~/.bashrc`。** Ubuntu 預設 `.bashrc` 開頭對非互動 shell
 就 `return`，寫那裡的 `export`（`DOCKER_HOST`、`PATH`）`wsl -d dev -e`、腳本、cron 都讀不到。
 alias 放 `.bashrc` 沒問題（本來只對互動有意義）。
+
+**同一條的延伸：整類「靠 shell rc 才生效」的工具都不能用。** nvm 就是典型——它是 shell
+function，且 install.sh 在 bash 下只寫 `.bashrc`，所以舊的 `node.yml` 裝完後
+`wsl -d dev -e node -v` 一直是找不到（2026-07 大整理才發現）。挑工具先問一句「非互動 shell
+拿不拿得到」：**真實路徑的 binary 可以，shell function / shell hook 不行**（同理 `fnm` 也
+必須靠 hook；`mise` 之所以能用是因為它有 shims 目錄這條真實路徑）。Node 改成裝 nodejs.org
+官方 tarball 到 `/usr/local/node`；順帶一提 apt 那條路也不通——Ubuntu 的 `nodejs` 套件不含
+npm，而 apt 的 `npm` 停在 9.2.0 還會拖進約 70 個 `node-*` 套件。
+
+**WSL 預設把 Windows PATH 接進來，且 `/mnt/c` 底下的檔案全被當成可執行 → 指令會解析到
+Windows 版。** 實測：Linux 端沒裝 node 時，`command -v npm` 拿到的是
+`/mnt/c/Program Files/nodejs/npm`，於是在 WSL 裡 `npm install` 跑的其實是 Windows 的 Node，
+裝出來的原生模組是 Windows 二進位。防法是 PATH 順序——`profile.yml` 把自己裝的路徑放最
+前面，WSL 附加到尾端的 Windows 路徑就永遠搶不贏。要根治可在 `/etc/wsl.conf` 設
+`appendWindowsPath = false`（順便加快 shell 啟動，PATH 查找不必走到 Windows 檔案系統），
+代價是 `code .` / `explorer.exe` 這類 interop 指令要自己加回 PATH ——**尚未採用**，目前
+只靠順序擋著。
 
 **rootless `podman.socket` 用「建 enable symlink」啟用，不要 `systemctl --user enable`。**
 WSL 上 systemd 259 的 user session 冷啟動 race 讓 `systemctl --user` 常連不上 user bus
