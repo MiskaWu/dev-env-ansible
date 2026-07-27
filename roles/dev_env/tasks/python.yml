@@ -2,7 +2,15 @@
 # uv 不只是套件管理器，它自己也管 Python 版本（uv python install、讀 .python-version、
 # uv run 遇到缺的版本會自動抓預編譯的 standalone build），所以這個 role 不需要另外裝
 # pyenv 之類的東西。~/.local/bin 的 PATH 由 profile.yml 統一管。
+#
+# pipefail 的理由同 claude.yml：少了它，curl 失敗會被判成成功（rc 取 pipeline 最後一個
+# 指令，而收到空輸入的 sh 乾淨結束回 0），結果是「task 綠燈、uv 不存在」。
+# executable: /bin/bash 是因為 Ubuntu 的 /bin/sh 是 dash，沒有 pipefail。
+# 管線右邊維持 `| sh`（installer 本身是 POSIX sh 寫的），只有外層需要 bash。
 - name: Install uv
   ansible.builtin.shell:
-    cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://astral.sh/uv/install.sh | sh
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
+    executable: /bin/bash
