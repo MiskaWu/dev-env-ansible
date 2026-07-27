@@ -84,6 +84,22 @@
 - **Node / nats / docker-compose 在 2026-07 移除**（用不到）。三者的安裝方式都研究定案過，
   要加回來看 README 的「版本管理」段與 git log —— 別重新從 nvm / `go install` /
   `releases/latest/download` 那些踩過的路開始。
+- **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
+  存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
+  是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：
+  - **`make list`** 是唯一的入口，跑 `list.yml`（`tags: [list, never]`，`never` 保證一般
+    apply 掃不到）。它印的開關值是 **play 裡求值後**的結果，`group_vars` / `-e` 的覆蓋
+    都算進去 —— 這正是它必須是 ansible task 而不是 Makefile 裡一串 `echo` 的原因，
+    role defaults 只有在 play 的 scope 裡才拿得到。
+  - **tag 清單**由 `make list` 結尾直接跑 `--list-tags` 取得，完全不手寫。
+  - **往 `main.yml` 加一個 import 時，回 `list.yml` 補一行。** 只有那句說明是人寫的；
+    ✓／· 讀真實變數，不會騙人。
+- **`make apply TAGS=xxx` 打錯字會靜默無事發生** —— ansible 對不存在的 tag 不報錯、只是
+  什麼都不做，一路綠燈跑完卻一個套件都沒裝。Makefile 的 `_check-tags` 在動作前先比對
+  `--list-tags` 的結果，不存在就 fail。**別把這個 guard 拿掉**，它擋的是最難發現的那種失敗。
+  另外注意：**單跑一個 tag 不會帶到 `profile`**，動到 `install_go` / `container_runtime`
+  這種會影響 PATH 的開關要 `TAGS=go,profile`。（不把 `profile` 改成 `always` 是刻意的——
+  那會讓 `make facts` 從唯讀變成會改 `~/.profile`。）
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
