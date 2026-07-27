@@ -1,5 +1,10 @@
 # {{ ansible_managed }}
-# netavark 的 firewall driver。預設是 nftables，但那個 driver 在 WSL2 kernel 上失敗
-# （自建 bridge network 的容器全部卡在 Created）。iptables 走的是 iptables-nft 相容層。
+# netavark 的 firewall driver，由 ansible 一律明寫、不吃發行版預設 —— netavark 的預設是
+# 編譯期決定的，同一版在不同發行版可能不同（Ubuntu 26.04 的 1.16.1 是 nftables）。
+# WSL2 上 nftables driver 會壞（自建 bridge network 的容器卡在 Created），故走 iptables
+# （現代 Ubuntu 的 iptables 是 iptables-nft 相容層，不是 legacy xtables）。
+#
+# 改這個值之後，既有的 network 仍記著舊 driver（netavark 會把 driver 記在每個 network
+# 上），要 `podman network rm` 重建、或整台重開才會完全乾淨。
 [network]
 firewall_driver = "{{ podman_firewall_driver }}"

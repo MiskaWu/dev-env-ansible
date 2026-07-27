@@ -138,7 +138,7 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 | `go_version` | `latest` | `latest` **每次 apply 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
 | `install_python` | `true` | uv |
 | `container_runtime` | `podman` | rootless Podman；設成 `none` 就整段跳過（連 `DOCKER_HOST` 也不寫） |
-| `podman_firewall_driver` | WSL 上 `iptables`，否則空 | netavark firewall driver；空字串 = 用 netavark 預設 |
+| `podman_firewall_driver` | WSL 上 `iptables`，否則 `nftables` | netavark firewall driver。**一律明寫**，因為 netavark 的預設是編譯期決定的、換發行版就可能不同。可用 `iptables` / `nftables` / `firewalld` / `none`，或 `''` 表示完全不管 |
 
 **這個 role 只裝不卸。** 從 `dev_env_packages` 刪掉只代表「以後不裝」，已經裝好的不會被
 動到 —— 要它真的從機器上消失是手動的事（`sudo apt purge --autoremove <pkg>`）。刻意如此：
