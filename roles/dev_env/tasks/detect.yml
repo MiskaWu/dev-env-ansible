@@ -3,8 +3,8 @@
 - name: Detect environment
   ansible.builtin.set_fact:
     is_wsl: "{{ ('microsoft' in ansible_facts.kernel | lower) or ('wsl' in ansible_facts.kernel | lower) }}"
-    # Debian 風格的架構名（amd64 / arm64）：Go tarball 與 nats .deb 都用這個拼法。
-    # docker-compose 用的是 x86_64 / aarch64，直接引用 ansible_facts.architecture。
+    # Debian 風格的架構名（amd64 / arm64）：Go tarball 用這個拼法。注意上游各家拼法
+    # 不一致（有 x86_64 / aarch64、也有 x64），要用時先確認，別直接套這個 fact。
     dev_env_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
 
 # uid / user 不另外跑 `id -u` —— gather_facts 已經給了 ansible_facts.user_uid 與

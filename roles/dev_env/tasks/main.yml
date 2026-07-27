@@ -20,11 +20,6 @@
   ansible.builtin.import_tasks: claude.yml
   tags: [claude]
 
-- name: Node
-  ansible.builtin.import_tasks: node.yml
-  when: install_node
-  tags: [node]
-
 - name: Python（uv）
   ansible.builtin.import_tasks: python.yml
   when: install_python

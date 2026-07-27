@@ -5,13 +5,3 @@
     name: [postgresql-client, redis-tools]
     update_cache: true
     cache_valid_time: 3600
-
-# 改用官方 .deb。原本走 `go install`，讓 clients 隱性依賴「Go 已經裝好」——
-# `make apply TAGS=clients` 在乾淨機上會直接爆，而且每次新機都要現場編譯。
-# apt 認得已安裝版本，天生冪等。
-- name: Install NATS CLI
-  become: true
-  ansible.builtin.apt:
-    deb: >-
-      https://github.com/nats-io/natscli/releases/download/v{{ nats_version
-      }}/nats-{{ nats_version }}-{{ dev_env_arch }}.deb

@@ -16,15 +16,12 @@
       # （/mnt/c/...）。沒有這層保證的話，像 npm 這種 Windows 也有的指令會解析到
       # Windows 版，在 WSL 裡裝出 Windows 的原生模組。
       export PATH="$HOME/.local/bin:/usr/local/go/bin:$HOME/go/bin:$PATH"
-      {% if install_node %}
-      export PATH="/usr/local/node/bin:$PATH"
-      {% endif %}
       # Go 1.21+ 的內建版本切換：go.mod 要求更新的版本時自動下載對應 toolchain。
       # auto 本來就是預設值，明寫是為了讓「不需要 Go 版本管理器」這件事有據可查，
       # 同時擋掉別處被設成 local 的可能。
       export GOTOOLCHAIN=auto
       {% if container_runtime == 'podman' %}
-      # 給 `podman compose` 與需要 Docker API 的工具（IDE / testcontainers）用。
+      # 給需要 Docker API 的工具（IDE / testcontainers）用。
       export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
       {% endif %}
 

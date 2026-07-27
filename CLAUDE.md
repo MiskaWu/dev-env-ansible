@@ -14,15 +14,18 @@
   ansible-core 2.24 移除，用了會噴 deprecation。
 - **facts 已經有的別再 shell 出去拿**：`ansible_facts.user_uid` / `.user_id` 就是「ansible
   實際連進去的那個 user」，不用另外跑 `id -u`（少一個 task，也少一個 `check_mode: false` 例外）。
-- **冪等**：`curl|bash` 類用 `creates:`；Go / Node 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
+- **冪等**：`curl|bash` 類用 `creates:`；Go 用「目標版本已在就跳過」；apt/lineinfile 天生冪等。
 - **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
   python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
   沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
-  Python 靠 uv，兩者都不需要外部工具；Node 目前鎖單一版本。要推翻這個決定前先看 README
-  的「版本管理」段，那裡有完整理由與各方案的取捨。
+  Python 靠 uv，兩者都不需要外部工具。要推翻這個決定前先看 README 的「版本管理」段，
+  那裡有完整理由與各方案的取捨。
+- **Node / nats / docker-compose 在 2026-07 移除**（用不到）。三者的安裝方式都研究定案過，
+  要加回來看 README 的「版本管理」段與 git log —— 別重新從 nvm / `go install` /
+  `releases/latest/download` 那些踩過的路開始。
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
@@ -45,10 +48,11 @@ has been removed` **整個 run 開頭中止、什麼都沒裝**。更陰險：`m
 （背景任務 / wsl.exe）可能把 exit code 誤報成 0，看起來「成功」實則沒做事。要 yaml 輸出用
 default callback 的 `result_format`，別用舊 callback。
 
-**netavark 預設 nftables driver 在 WSL2 kernel 上失敗。** 症狀：`docker-compose up` 容器
-卡在 `Created`，或 `netavark: nftables error: "nft" did not return successfully`。**只在
-WSL**，且**只有自建 bridge network（compose 一定會）才炸**——`podman run` 走 pasta 預設
-網路不碰防火牆規則所以正常，所以「`podman run` 全綠但 compose 全爆」是標準失敗形狀。
+**netavark 預設 nftables driver 在 WSL2 kernel 上失敗。** 症狀：容器卡在 `Created`，或
+`netavark: nftables error: "nft" did not return successfully`。**只在 WSL**，且**只有
+自建 bridge network 才炸**（`podman network create` + `--network`，或任何 compose 工具）
+——`podman run` 走 pasta 預設網路不碰防火牆規則所以正常，所以「`podman run` 全綠但一接
+自建網路就爆」是標準失敗形狀。
 解法：裝 `iptables`（**注意現代 Ubuntu 的 `iptables` 套件裝的其實是 iptables-nft 相容層，
 不是 legacy xtables**）+ 寫 `/etc/containers/containers.conf.d/50-firewall-driver.conf` 的
 `firewall_driver = "iptables"`。由 `podman_firewall_driver` 變數控制（WSL 上預設
@@ -64,8 +68,8 @@ WSL**，且**只有自建 bridge network（compose 一定會）才炸**——`po
 （rootless 的 uid 映射，沒有它 rootless 完全不能用）、`passt`（提供 pasta，podman 5 的
 **預設** rootless 網路後端）、`dbus-user-session`（systemd `--user` 的 D-Bus 整合，rootless
 `podman.socket` 要）都只是 podman 的 Recommends；**`aardvark-dns` 更隱蔽——它是 `netavark`
-的 Recommends**，負責 bridge network 裡的容器名解析，也就是 compose 裡 `app` 連
-`postgres:5432` 靠的東西。apt 預設會裝 Recommends 所以平常看不出問題，但只要誰用
+的 Recommends**，負責自建 bridge network 裡的容器名解析（容器之間用名字互連就靠它）。
+apt 預設會裝 Recommends 所以平常看不出問題，但只要誰用
 `--no-install-recommends`、或換個 base image，就會靜默壞掉。不該碰運氣。
 （反過來，`buildah` / `skopeo` / `slirp4netns` / `fuse-overlayfs` 是舊清單的贅肉，2026-07
 砍掉：前兩個 podman 已內建等價功能，slirp4netns 被 pasta 取代，fuse-overlayfs 在
@@ -76,12 +80,11 @@ kernel 5.11+ 的 rootless 下可直接用 native overlay。）
 alias 放 `.bashrc` 沒問題（本來只對互動有意義）。
 
 **同一條的延伸：整類「靠 shell rc 才生效」的工具都不能用。** nvm 就是典型——它是 shell
-function，且 install.sh 在 bash 下只寫 `.bashrc`，所以舊的 `node.yml` 裝完後
+function，且 install.sh 在 bash 下只寫 `.bashrc`，所以當年用 nvm 裝的 Node，
 `wsl -d dev -e node -v` 一直是找不到（2026-07 大整理才發現）。挑工具先問一句「非互動 shell
 拿不拿得到」：**真實路徑的 binary 可以，shell function / shell hook 不行**（同理 `fnm` 也
-必須靠 hook；`mise` 之所以能用是因為它有 shims 目錄這條真實路徑）。Node 改成裝 nodejs.org
-官方 tarball 到 `/usr/local/node`；順帶一提 apt 那條路也不通——Ubuntu 的 `nodejs` 套件不含
-npm，而 apt 的 `npm` 停在 9.2.0 還會拖進約 70 個 `node-*` 套件。
+必須靠 hook；`mise` 之所以能用是因為它有 shims 目錄這條真實路徑）。這條規則跟 Node 裝不裝
+無關（現在不裝了），是挑任何工具都適用的判準。
 
 **WSL 預設把 Windows PATH 接進來，且 `/mnt/c` 底下的檔案全被當成可執行 → 指令會解析到
 Windows 版。** 實測：Linux 端沒裝 node 時，`command -v npm` 拿到的是
@@ -99,12 +102,12 @@ WSL 上 systemd 259 的 user session 冷啟動 race 讓 `systemctl --user` 常�
 `file: state=link` 建，**不需要 live 的 user manager**；啟動則 best-effort（`command:
 systemctl --user start ... ` + `failed_when: false`，race 擋住不致命）。
 
-**socket 起不來、compose 連不到 socket → full `wsl --shutdown`（不是 `--terminate`）。**
+**socket 起不來、Docker API 用戶端連不到 socket → full `wsl --shutdown`（不是 `--terminate`）。**
 根因是 WSL 上 systemd 259 的 `user@<uid>.service` 起來後 spawn systemd-executor 失敗
 （journal: `Failed to spawn executor: Device or resource busy`），整個 user session
 degraded。`--terminate` 只停單一 distro、留了 VM 層狀態清不掉；**full `wsl --shutdown`
 重置整個 VM 才行**——之後乾淨 session 一來 `user@` active、symlink-enabled 的 podman.socket
-自動起、compose 端到端通（實測）。所以 `make apply` 裝完，Windows 端跑一次 `wsl --shutdown`
+自動起、socket 端到端通（實測）。所以 `make apply` 裝完，Windows 端跑一次 `wsl --shutdown`
 再重進。這不是安裝失敗，是平台 race。
 
 （另：`.config` 若被 root 建走，建 symlink 會 permission denied——見 wsl-bootstrap 的
@@ -126,7 +129,7 @@ mirrored 開著時測的，功勞被錯算給 NAT。）關掉 mirrored 重測（
 （#13868、#13317）本機實測未發生，但 WSL 更新後要重驗。
 另一個小坑：綁 IPv6-only(`::`) 的服務不會被 relay，綁 `0.0.0.0`（podman `-p` 預設就是）。
 
-**OOM trap（實測未遇到，記著防復發）**：compose 經 systemd user unit 呼叫 podman，容器繼承
+**OOM trap（實測未遇到，記著防復發）**：容器經 systemd user unit 啟動時會繼承
 `OOMScoreAdjust=100`，規格要求 0 時非特權調不下來 → `oom_score_adj: Permission denied`。
 `podman run` 不受影響。解法：`user@.service` 加 `OOMScoreAdjust=0` drop-in。
 
@@ -139,6 +142,7 @@ podman 會警告 `"/" is not a shared mount ... missing mounts with rootless con
 （`wsl --shutdown` 就沒了），必須走 unit 才會每次開機生效。
 
 **只用 podman，不 alias `docker=podman`（使用者決定）。** alias task 是 `state: absent`
-——套用時**主動移除** `.bashrc` 裡既有的那行，不只是不再加。compose 走 `podman compose`
-（`docker-compose` 二進位當 provider），`DOCKER_HOST`（podman socket）保留給
-`podman compose` 與需要 Docker API 的工具（IDE / testcontainers）。
+——套用時**主動移除** `.bashrc` 裡既有的那行，不只是不再加。**compose 也不裝**（2026-07
+移除 `docker-compose` 二進位）。但 `DOCKER_HOST` 與 rootless `podman.socket` 保留 ——
+那是給需要 Docker API 的工具（IDE、testcontainers）用的，跟 compose 是兩回事。將來要
+compose，`podman compose` 需要一個外部 provider 二進位才會動。

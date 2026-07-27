@@ -2,7 +2,7 @@
 # 套件清單刻意寫明「靠 Recommends 會被帶進來、但少了就會壞」的那幾個：
 #   uidmap            newuidmap/newgidmap，rootless 的 uid 映射。沒有它 rootless 完全不能用
 #   passt             提供 pasta，podman 5 的預設 rootless 網路後端
-#   aardvark-dns      netavark 的 DNS server；compose 裡用服務名互連（app → postgres）靠它
+#   aardvark-dns      netavark 的 DNS server；自建 bridge network 裡容器用名字互連靠它
 #   dbus-user-session systemd --user 的 D-Bus 整合，rootless podman.socket 需要
 # 這四個在 Ubuntu 上都只是 Recommends（aardvark-dns 甚至是 netavark 的 Recommends），
 # 一旦誰用 --no-install-recommends 就會靜默壞掉，不該碰運氣。
@@ -24,7 +24,7 @@
 
 # --- netavark firewall driver -------------------------------------------------
 # netavark 預設走 nftables（它的 Recommends 就是 nftables），但那個 driver 在 WSL2
-# kernel 上失敗，會弄壞每一個 compose bridge network。改用 iptables driver ——
+# kernel 上失敗，會弄壞每一個自建 bridge network。改用 iptables driver ——
 # 注意現代 Ubuntu 的 iptables 套件裝的其實是 iptables-nft 相容層，不是 legacy xtables。
 - name: Install iptables (netavark firewall driver)
   become: true
@@ -127,19 +127,10 @@
   args:
     creates: "/var/lib/systemd/linger/{{ ansible_facts.user_id }}"
 
-- name: Install docker-compose binary (podman compose provider)
-  become: true
-  ansible.builtin.get_url:
-    url: >-
-      https://github.com/docker/compose/releases/download/v{{ compose_version
-      }}/docker-compose-linux-{{ ansible_facts.architecture }}
-    checksum: >-
-      sha256:https://github.com/docker/compose/releases/download/v{{ compose_version
-      }}/docker-compose-linux-{{ ansible_facts.architecture }}.sha256
-    dest: /usr/local/bin/docker-compose
-    mode: "0755"
-  when: compose_shim
-
+# 註：不裝 docker-compose 二進位（使用者決定不用 compose）。DOCKER_HOST 與
+# podman.socket 仍然保留 —— 那是給需要 Docker API 的工具（IDE、testcontainers）用的，
+# 跟 compose 是兩回事。
+#
 # 用「建 enable symlink」啟用 podman.socket，而不是 systemctl --user enable。
 # 為什麼：WSL 上 systemd 259 的 user session 冷啟動有 race，`systemctl --user` 常
 # 連不上 user bus（Failed to connect to user scope bus）而讓整個 play abort。
@@ -177,8 +168,8 @@
 
 # 使用者只用 podman，不要 alias docker=podman（避免 docker/podman 同名混淆）。
 # state: absent —— 套用時主動移除 .bashrc 裡那行（不只是不再加）。
-# 註：DOCKER_HOST 保留（見 profile.yml），指向 podman socket，給 `podman compose`
-# 與需要 Docker API 的工具（IDE / testcontainers）用。
+# 註：DOCKER_HOST 保留（見 profile.yml），指向 podman socket，給需要 Docker API 的
+# 工具（IDE / testcontainers）用。
 - name: Remove docker=podman alias from ~/.bashrc（只用 podman）
   ansible.builtin.lineinfile:
     path: "{{ ansible_facts.env.HOME }}/.bashrc"
