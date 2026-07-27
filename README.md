@@ -29,6 +29,7 @@ dev-env-ansible/
     ├── templates/              # containers 設定 drop-in、systemd unit
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact
+        ├── list.yml            # `make list` 的清單輸出   (tags: [list, never])
         ├── base.yml            # core 套件（無條件）+ dev_env_packages（選裝）
         ├── claude.yml          # Claude Code（native installer）
         ├── podman.yml          # podman + .d drop-in    (when: container_runtime)
@@ -58,24 +59,49 @@ git clone /mnt/c/Users/MiskaWu/Projects/dev-env-ansible ~/projects/dev-env-ansib
 cd ~/projects/dev-env-ansible
 ```
 
-**2. 裝軟體。**
+**2. 先看有什麼可裝（選用，但第一次值得跑）。**
+
+```bash
+make list     # 每一項會不會裝、由哪個開關控制、可用的 tag
+```
+
+輸出長這樣 —— **✓／· 與變數值都是照那台機器當下算出來的**，不是寫死的文件
+（所以這段只是示意，以你自己跑出來的為準）：
+
+```
+  ✓ base     core 套件（Claude installer 與這個 repo 的最低相依）— 無開關，清單見 base.yml
+  ✓ base     CLI 工具 — dev_env_packages = ripgrep, unzip, lazygit
+  ✓ base     build-essential（Go cgo / uv C extension 的前置）— install_build_tools = True
+  ✓ claude   Claude Code — 無開關，這個 repo 的存在理由
+  ✓ podman   rootless Podman（firewall driver: iptables） — container_runtime = podman
+  ✓ go       Go latest — install_go = True
+  ✓ python   uv（順便管 Python 版本，所以不需要 pyenv）— install_python = True
+  ✓ profile  ~/.profile managed block（PATH / GOTOOLCHAIN / DOCKER_HOST）— 無開關
+
+可用的 tag（直接跟 playbook 要的，不是手抄）：
+    always base claude go list podman profile python
+```
+
+`make list EXTRA='-e install_go=false'` 可以先預覽某組開關的結果再決定要不要真的套。
+
+**3. 裝軟體。**
 
 ```bash
 make init     # 補 ansible → 裝 podman/go/claude/toolchain → 印收尾清單
 ```
 
-（只想預覽先 `make check`；只裝某一項 `make apply TAGS=python`。可用的 tag：`base`、
-`claude`、`podman`、`go`、`python`、`profile`。**注意 ansible 對不存在的 tag
-不會報錯，只會什麼都不做** —— 打錯字會靜默無事發生。）
+（只想預覽這次會改哪些檔先 `make check`；只裝某一段 `make apply TAGS=python`。tag
+打錯字 **ansible 自己不會報錯、只會什麼都不做**，所以 Makefile 會在動作前先比對一次
+真實的 tag 清單，不存在就直接失敗。）
 
-**3. 回 Windows 端 full shutdown。** 讓 rootless `podman.socket` 在乾淨 session 起來
+**4. 回 Windows 端 full shutdown。** 讓 rootless `podman.socket` 在乾淨 session 起來
 （原因見下）：
 
 ```powershell
 wsl --shutdown
 ```
 
-**4. 收尾**（手動接上平台，刻意不自動化）。SSH keys 與 git 身分 bring-up 已備好，剩貼與認證：
+**5. 收尾**（手動接上平台，刻意不自動化）。SSH keys 與 git 身分 bring-up 已備好，剩貼與認證：
 
 ```bash
 wsl -d dev
@@ -108,10 +134,19 @@ podman rm -f svc && podman network rm t
 ```bash
 cd ~/projects/dev-env-ansible
 git pull                 # 若遠端有更新
+make list                # 忘了有哪些項目 / 現在誰開誰關 —— 唯讀，不會動到機器
 make check               # 預覽這次會動什麼（diff）；LOCAL 預設 1，在 distro 內不用帶
 make apply               # 套用
-make apply TAGS=python   # 或只跑某一段
+make apply TAGS=python   # 或只跑某一段（tag 從 make list 的最後一行看）
 ```
+
+`list` 與 `check` 回答的是不同問題，兩個都留著：**`list` 是「有哪些東西可裝、開關現在
+是什麼值」**（純唯讀、不連線做事），**`check` 是「這次 apply 會改哪些檔」**（真的去 host
+上比對）。第一次或改完 `defaults` 想確認組合時看 `list`，動手前的最後一眼看 `check`。
+
+**只跑單一 tag 時 `~/.profile` 不會跟著更新**（它自己是 `profile` tag）。動到
+`install_go` / `container_runtime` 這類會影響 PATH 或環境變數的開關時要一起帶上，
+例如 `make apply TAGS=go,profile` —— 否則會裝出「Go 在機器上但 PATH 找不到」的狀態。
 
 重跑會收斂（冪等）—— 對已裝好的 host `make check` 應該是 `changed=0`。
 
@@ -142,7 +177,8 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 
 ## 設定
 
-在 `inventory/hosts.yml`、`group_vars/` 或 `host_vars/` 覆蓋預設：
+在 `inventory/hosts.yml`、`group_vars/` 或 `host_vars/` 覆蓋預設。下表是**預設值**；
+想知道某台機器上求值後的**實際值**（覆蓋都算進去了）跑 `make list`：
 
 | 變數 | 預設 | 控制 |
 |---|---|---|
