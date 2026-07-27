@@ -114,9 +114,37 @@ inet table + nat postrouting/prerouting hook + `masquerade` + `ct state establis
 builtin，模組目錄有 924 個模組。**也排除了「缺 `nft_counter`」**（該模組確實不存在，
 但 `counter` 表達式實測可用）。
 
-**所以：現象確定、根因未明。** 已知失敗發生在 netavark 自己組的 container chain
-ruleset，而不是 kernel 能力或 rootless netns 這一層。`--log-level=trace` 不會印出
-netavark 送給 `nft` 的實際內容，要再往下追得改從 netavark 原始碼或 strace 著手。
+**根因（2026-07-27 查到）：WSL2 kernel 沒編 `CONFIG_NFT_FIB_IPV6`。** 實測：
+
+```
+CONFIG_NFT_FIB=m
+CONFIG_NFT_FIB_IPV4=m
+# CONFIG_NFT_FIB_IPV6 is not set      ← 關鍵
+```
+
+連鎖：`nft_fib_ipv6` 沒編 → **`nft_fib_inet` 模組不存在**（它需要 v4+v6 兩者）→
+netavark 建的是 **`inet` family** 的 `table inet netavark`，其中規則用了 `fib`
+（判斷封包是否來自本機）→ `inet` 表裡的 `fib` 找不到模組 → nft 回 ENOENT
+（`Could not process rule: No such file or directory`）→ netavark 包成
+`"nft" did not return successfully`。
+
+決定性對照組（在 `unshare -Urn` 裡重現，一字不差）：
+
+| 測試 | 結果 |
+|---|---|
+| `table inet t { chain c { fib daddr type local accept } }` | ❌ `Could not process rule: No such file or directory` |
+| `table ip t { chain c { fib daddr type local accept } }`（純 v4） | ✅ 通過 |
+
+iptables driver 完全不碰 `fib`，所以不受影響。**注意**：這是高信心推論而非直接證據
+——已證明「本 kernel 上 inet+fib 會產生該錯誤」且「netavark 二進位含 Fib 表達式
+（`struct Fib with 2 elements`）」，但沒攔截到 netavark 送出的字面 ruleset。
+
+**這是 WSL 通病，不是本機問題。** 上游 [podman#25201](https://github.com/containers/podman/issues/25201)
+（已關閉，官方解法就是改用 iptables，但沒查出原因）、
+[microsoft/WSL#9772](https://github.com/microsoft/WSL/issues/9772)（WSL kernel 裁掉
+netfilter 選項，已關閉）、netavark#1057 / #1411、podman-compose#1154 都是同一個錯誤
+在各家 WSL distro 上的回報。理論上自編 WSL kernel（`.wslconfig` 的 `kernel=`）加上
+`CONFIG_NFT_FIB_IPV6=y` 可解，但每次 WSL 更新都要重編，不划算 —— **維持 iptables**。
 
 **重驗方式**（升級 podman/netavark 後值得再跑一次；通了就能把整個 workaround 連同
 `iptables` 相依一起砍掉）：
