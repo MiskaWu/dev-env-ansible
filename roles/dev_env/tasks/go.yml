@@ -43,3 +43,28 @@
         dest: /usr/local
         remote_src: true
       when: not ansible_check_mode
+
+# --- /tmp 收尾 ----------------------------------------------------------------
+# 一份 tarball 64MB，而 `go_version: latest` 每次上游走版就多留一份（WSL 的 /tmp 是磁碟、
+# 不是 tmpfs，重開機也不會自己消失）。
+#
+# 刻意放在上面那個 block **外面**：擺在 block 裡只會清掉「這次剛裝的那一份」，於是之前
+# 走版留下的舊 tarball 永遠沒人收 —— 而那才是會累積的那些。放外面等於每次 apply 都做一次
+# GC，連 role 加這段之前就躺在 /tmp 的都會被收走。
+# 留著沒有加速效果：上面判「要不要裝」是看 `go version` 的輸出，不看 tarball 在不在。
+# pattern 綁死 go<版本>.linux-<arch>.tar.gz 這個夠窄的形狀，不會誤掃到別人放在 /tmp 的檔案。
+- name: Find leftover Go tarballs in /tmp
+  ansible.builtin.find:
+    paths: /tmp
+    patterns: "go*.linux-{{ dev_env_arch }}.tar.gz"
+  register: _go_tarballs
+  changed_when: false
+  check_mode: false
+
+- name: Remove leftover Go tarballs
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _go_tarballs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
