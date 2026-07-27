@@ -1,0 +1,39 @@
+---
+# `make list` 專用：印出「這台機器、這組變數下，apply 會裝什麼」。
+# tag 是 [list, never] —— `never` 保證一般的 apply / check 絕不會跑到它，要跑只能
+# 明確 `--tags list`。
+#
+# 為什麼是 ansible task 而不是 Makefile 裡一串 echo：這裡印的是**求值後**的開關值，
+# inventory / group_vars / host_vars / `-e` 的覆蓋全都算進去了，而 role defaults 只有
+# 在 play 的 scope 裡才拿得到。把清單手抄進 Makefile 就會跟 defaults/main.yml 漂移
+# ——這個檔的存在理由正是要消掉那種手抄。
+#
+# 仍然手寫的只有「說明文字」跟行本身：往 main.yml 加一個 import 時記得回來補一行
+# （tag 有沒有漏則不必擔心，`make list` 最後會直接跟 playbook 要一次真實 tag 清單）。
+# 至於裝或不裝（✓ / ·）是讀真實變數算出來的，不會騙人。
+#
+# 刻意**不列舉 core 套件的名字**：那份清單是 base.yml 裡的字面值、這裡讀不到，抄過來
+# 就會漂移（`jq` 2026-07-27 升格為 core，這行原本抄的三個名字當場過期）。反正 core 是
+# 無條件裝的、不是你要做的選擇，列不列名字對「我能裝什麼」沒有幫助。對比
+# `dev_env_packages`：那個是真的讀變數，所以照列。
+- name: 可安裝項目一覽
+  ansible.builtin.debug:
+    msg: |-
+      可安裝的項目（✓ 這次會裝 / · 跳過）
+
+        ✓ base     core 套件（Claude installer 與這個 repo 的最低相依）— 無開關，清單見 base.yml
+        {{ '✓' if dev_env_packages | length > 0 else '·' }} base     CLI 工具 — dev_env_packages = {{ dev_env_packages | join(', ') if dev_env_packages | length > 0 else '（空清單）' }}
+        {{ '✓' if install_build_tools | bool else '·' }} base     build-essential（Go cgo / uv C extension 的前置）— install_build_tools = {{ install_build_tools | bool }}
+        ✓ claude   Claude Code — 無開關，這個 repo 的存在理由
+        {{ '✓' if container_runtime == 'podman' else '·' }} podman   rootless Podman{{ '（firewall driver: ' ~ (podman_firewall_driver | default('', true) | ternary(podman_firewall_driver, '發行版預設')) ~ '）' if container_runtime == 'podman' else '' }} — container_runtime = {{ container_runtime }}
+        {{ '✓' if install_go | bool else '·' }} go       Go {{ go_version }} — install_go = {{ install_go | bool }}
+        {{ '✓' if install_python | bool else '·' }} python   uv（順便管 Python 版本，所以不需要 pyenv）— install_python = {{ install_python | bool }}
+        ✓ profile  ~/.profile managed block（PATH / GOTOOLCHAIN / DOCKER_HOST）— 無開關
+
+      要改開關：寫進 inventory / group_vars，或臨時用
+          make apply EXTRA='-e install_go=false'
+      （`make list EXTRA='...'` 會照樣求值，可以先預覽組合的結果。）
+
+      只跑單一 tag 時 ~/.profile **不會**跟著更新（它自己是 profile tag）。動到
+      install_go / container_runtime 這種會影響 PATH 的開關時記得一起帶上：
+          make apply TAGS=go,profile

@@ -7,6 +7,13 @@
   ansible.builtin.import_tasks: detect.yml
   tags: always
 
+# 只給 `make list` 用，什麼都不改。`never` 讓它不會被一般的 apply / check 掃到，
+# 唯一的進入方式是明確 `--tags list`。放在 detect 之後是因為它要印
+# podman_firewall_driver，而那個預設值引用 detect 設的 is_wsl。
+- name: 可安裝項目一覽（唯讀）
+  ansible.builtin.import_tasks: list.yml
+  tags: [list, never]
+
 - name: 基礎套件（core + 選裝的 CLI 工具）
   ansible.builtin.import_tasks: base.yml
   tags: [base]
