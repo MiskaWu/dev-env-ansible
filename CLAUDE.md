@@ -18,10 +18,16 @@
   上游改 manifest 結構就靜默失效、還印出誤導的 "Platform … not found in manifest"。
   要再往 core 加東西就拿出這種等級的證據：**在某個必經路徑的原始碼裡指得出它被呼叫**，
   而不是「Claude 大概會用到」。
-  （待決：`ripgrep` 可能也夠格。2026-07-27 查 claude 2.1.220 的 binary —— 安裝目錄裡
-  **沒有**自帶 rg，binary 內有 `command -v rg` 與「跑 `rg --version` 確認 stdout 以
-  `ripgrep ` 開頭」的可用性偵測，看起來是找 PATH 上的系統 rg。還沒確認找不到時會不會
-  降級成別的搜尋實作 —— 確認前先留在 `dev_env_packages`。）
+  **`ripgrep` 查過了，不夠格 —— 留在 `dev_env_packages`。** 它確實是 Claude Code 唯一
+  另一個會 `command -v` 找的工具（binary 裡 `command -v` 的對象只有 4 個：`rg`、`jq`、
+  `powershell.exe`、`compinit`），一度看起來跟 jq 同級。但 rg 有兩種來源，binary 裡的
+  mode 只有 `"embedded"` 與 `"system"` 兩個值，而它自己的錯誤訊息把話講死了：
+  `ripgrep not found on PATH. Install it (…) or use the native claude binary which
+  embeds it.` —— **我們走的正是 native installer，rg 是內嵌的**，系統那支只有 npm
+  安裝版才需要。所以裝 `ripgrep` 是為了你自己在 shell 敲 `rg`，不是為了 Claude。
+  **這組對照就是這條規則的範本**：兩個工具都被 Claude「用到」，但 jq 是外部相依
+  （installer 是 shell script，沒辦法內嵌），rg 是自帶。要往 core 加東西就查到這個
+  程度為止 —— 「Claude 會用到」不等於「Claude 需要系統上有」。
 - **多裝一個 apt 小工具＝在 `dev_env_packages` 加一行**，不要開新的 task 檔。獨立 task 是
   留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
   以前 psql/redis 有自己的 `clients.yml` + `install_clients`、lazygit 也差點為了一句
