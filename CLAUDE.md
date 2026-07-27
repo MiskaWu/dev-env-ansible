@@ -9,9 +9,19 @@
 
 - **核心只有 Claude Code + 它的最低相依，其餘一律是選裝。** 這個 repo 是「以 Claude +
   Ansible 為基準的環境準備工具」，所以 `base.yml` 的 core packages（`ca-certificates` /
-  `curl` / `git`）與 `claude.yml` 無條件跑，**其他每一個 import 都必須有 `when`**——
+  `curl` / `git` / `jq`）與 `claude.yml` 無條件跑，**其他每一個 import 都必須有 `when`**——
   **包含 Go**（2026-07 之前它是無條件必裝，那是分層畫錯）。判斷「這個要不要放 core」
   只問一句：少了它還能不能把這台機器準備起來？「好用」不是理由。
+  **`jq` 是唯一通過這關的「小工具」（2026-07-27 從選裝升上來）**，靠的不是好用，是
+  `install.sh` 裡真的有它的分支：解 manifest checksum 時有 jq 走 jq、沒有就退回
+  `get_checksum_from_manifest()` 的 bash regex（假設 platform 與 checksum 之間不出現 `}`），
+  上游改 manifest 結構就靜默失效、還印出誤導的 "Platform … not found in manifest"。
+  要再往 core 加東西就拿出這種等級的證據：**在某個必經路徑的原始碼裡指得出它被呼叫**，
+  而不是「Claude 大概會用到」。
+  （待決：`ripgrep` 可能也夠格。2026-07-27 查 claude 2.1.220 的 binary —— 安裝目錄裡
+  **沒有**自帶 rg，binary 內有 `command -v rg` 與「跑 `rg --version` 確認 stdout 以
+  `ripgrep ` 開頭」的可用性偵測，看起來是找 PATH 上的系統 rg。還沒確認找不到時會不會
+  降級成別的搜尋實作 —— 確認前先留在 `dev_env_packages`。）
 - **多裝一個 apt 小工具＝在 `dev_env_packages` 加一行**，不要開新的 task 檔。獨立 task 是
   留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
   以前 psql/redis 有自己的 `clients.yml` + `install_clients`、lazygit 也差點為了一句
