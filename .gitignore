@@ -2,3 +2,11 @@
 *.log
 .vault_pass
 inventory/host_vars/*.vault
+
+# Claude Code 在 .claude/worktrees/ 底下開拋棄式 worktree —— 那是這個 repo 自己的
+# checkout（.git 是指向 ../../.git/worktrees/<name> 的檔案），被 git add 進去會變成
+# 內嵌 repo（gitlink），clone 的人只會拿到空殼。只擋這一層，不要整個擋 .claude/：
+# 專案級的 settings.json / agents / skills / commands 是該進版控、該共用的。
+.claude/worktrees/
+# 個人覆寫，依慣例不共用
+.claude/settings.local.json
