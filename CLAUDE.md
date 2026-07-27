@@ -41,6 +41,11 @@
   記錄 Grep 工具直接忽略它，本機實測也一樣 —— 設成 `0` 且 PATH 無 rg，搜尋照樣成功。
   另注意網路上談的多半是 **npm 版**（`@vscode/ripgrep`，rg 是 vendor 目錄裡的獨立檔案），
   跟我們用的 native binary 形狀不同，別把那邊的結論直接搬過來。
+  **要分辨手上跑的是哪一支 rg，看版本號就好**：內嵌的是 **ripgrep 14.1.1
+  (rev f6d0fcd24a)**，Ubuntu 26.04 的 `ripgrep` 套件是 **15.1.0**。2026-07-27 在本機
+  `apt purge --autoremove ripgrep`（只拔它一個、無連帶、無殘留）之後，`rg --version`
+  從 15.1.0 變成 14.1.1、`type -a rg` 從檔案變成 function，而 Grep 工具在**完全沒有
+  模擬**的正常環境下照樣命中 —— 這是這條規則最硬的證據，勝過先前所有讀字串的推論。
   **這組對照就是這條規則的範本**：兩個工具都被 Claude「用到」，但 jq 是外部相依
   （installer 是 shell script，沒辦法內嵌），rg 是自帶。要往 core 加東西就查到這個
   程度為止 —— 「Claude 會用到」不等於「Claude 需要系統上有」。
