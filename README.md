@@ -1,7 +1,12 @@
 # dev-env-ansible
 
-把一台 Linux 裝成完整開發環境的 Ansible role：baseline 套件、Podman（rootless）、Go、
-Claude Code，以及可選的 toolchain（uv、DB/cache clients）。
+把一台 Linux 裝成開發環境的 Ansible role。以 **Claude Code + Ansible** 為基準：
+
+- **核心（無條件裝）** —— Claude Code，以及它與這個 repo 本身的最低相依
+  （`ca-certificates`、`curl`、`git`）。這層沒有開關，因為關掉就沒有這個 repo 了。
+- **個人選裝（全部有開關）** —— 順手的 CLI 工具（`dev_env_packages` 清單）、語言
+  toolchain（Go、uv）、容器 runtime（rootless Podman）。**包含 Go 在內，沒有誰是
+  「寫死必裝」的**；換一台機器就換一組值。
 
 （git 身分與 SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在 bring-up 就備好，
 因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。）
@@ -18,18 +23,22 @@ dev-env-ansible/
 ├── site.yml                    # 頂層 playbook
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
-    ├── defaults/main.yml       # 可調項（toolchain 開關、Go 版本）
+    ├── defaults/main.yml       # 選裝清單 dev_env_packages + toolchain 開關
     ├── templates/              # containers 設定 drop-in、systemd unit
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact
-        ├── base.yml            # baseline apt 套件
-        ├── podman.yml          # podman + .d drop-in；WSL 部分用 is_wsl gate
-        ├── go.yml              # Go binary（冪等：目標版本已在就跳過）
+        ├── base.yml            # core 套件（無條件）+ dev_env_packages（選裝）
         ├── claude.yml          # Claude Code（native installer）
-        ├── python.yml          # uv              (when: install_python)
-        ├── clients.yml         # psql, redis-cli (when: install_clients)
+        ├── podman.yml          # podman + .d drop-in    (when: container_runtime)
+        ├── go.yml              # Go binary（目標版本已在就跳過）(when: install_go)
+        ├── python.yml          # uv                     (when: install_python)
         └── profile.yml         # ~/.profile 的單一 managed block（PATH / 環境變數）
 ```
+
+**要多裝一個 apt 小工具，改 `dev_env_packages` 一行就好**，不要開新的 task 檔 —— 獨立
+task 是留給「需要查版本 / 抓 tarball / 跑官方 installer」的東西（go.yml、python.yml
+那種）。編譯工具鏈也不在那個清單裡：`build-essential` 是 Go 與 uv 共用的前置，不是你
+會敲的工具，所以獨立成 `install_build_tools`。
 
 ## 首次設定
 
@@ -54,7 +63,7 @@ make init     # 補 ansible → 裝 podman/go/claude/toolchain → 印收尾清�
 ```
 
 （只想預覽先 `make check`；只裝某一項 `make apply TAGS=python`。可用的 tag：`base`、
-`podman`、`go`、`claude`、`python`、`clients`、`profile`。**注意 ansible 對不存在的 tag
+`claude`、`podman`、`go`、`python`、`profile`。**注意 ansible 對不存在的 tag
 不會報錯，只會什麼都不做** —— 打錯字會靜默無事發生。）
 
 **3. 回 Windows 端 full shutdown。** 讓 rootless `podman.socket` 在乾淨 session 起來
@@ -123,10 +132,22 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 
 | 變數 | 預設 | 控制 |
 |---|---|---|
-| `container_runtime` | `podman` | runtime（只實作 `podman` 路徑） |
-| `podman_firewall_driver` | WSL 上 `iptables`，否則空 | netavark firewall driver；空字串 = 用 netavark 預設 |
+| `dev_env_packages` | ripgrep, jq, unzip, lazygit | 日常會敲的 apt 小工具；設 `[]` 就只剩 core |
+| `install_build_tools` | `true` | `build-essential`（Go 的 cgo、uv 的 C extension 前置） |
+| `install_go` | `true` | Go toolchain（連帶 `~/.profile` 的 Go PATH 與 `GOTOOLCHAIN`） |
 | `go_version` | `latest` | `latest` **每次 apply 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
 | `install_python` | `true` | uv |
-| `install_clients` | `true` | `psql`、`redis-cli` |
+| `container_runtime` | `podman` | rootless Podman；設成 `none` 就整段跳過（連 `DOCKER_HOST` 也不寫） |
+| `podman_firewall_driver` | WSL 上 `iptables`，否則空 | netavark firewall driver；空字串 = 用 netavark 預設 |
+
+**這個 role 只裝不卸。** 從 `dev_env_packages` 刪掉只代表「以後不裝」，已經裝好的不會被
+動到 —— 要它真的從機器上消失是手動的事（`sudo apt purge --autoremove <pkg>`）。刻意如此：
+卸載是破壞性動作，不該每次 `apply` 都自動跑一遍。動手前先 `apt-get -s purge
+--autoremove <pkg>` 看一次影響範圍，發行版自帶的套件尤其要看（例如 `tmux` 是 Ubuntu WSL
+image 內建，purge 它會連 `byobu` 與 `ubuntu-wsl` metapackage 一起拔掉）。
+
+**實測體積**（讓取捨有依據）：`build-essential` 260MB / 43 個套件，跟 Go 的 269MB、
+Claude Code 的 263MB 同級 —— 它不是異常值。相對地整份 `dev_env_packages` 只有約 24MB。
+所以該不該裝 `build-essential` 的判準是「你編不編 native 東西」，不是體積。
 
 （SSH keys / git 身分的設定在 `wsl-bootstrap` 的 `config.ps1`，不在這裡。）

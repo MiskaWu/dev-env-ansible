@@ -1,12 +1,21 @@
 ---
+# 順序即分層：core（無條件）→ 個人選裝 → profile 收尾。
+# 每個「個人選裝」的 import 都有 when，沒有例外 —— 一眼看得出誰是核心、誰是選的。
+
+# ---- core：這個 repo 的存在理由 ---------------------------------------------
 - name: 偵測環境（is_wsl / arch）
   ansible.builtin.import_tasks: detect.yml
   tags: always
 
-- name: 基礎套件
+- name: 基礎套件（core + 選裝的 CLI 工具）
   ansible.builtin.import_tasks: base.yml
   tags: [base]
 
+- name: Claude Code
+  ansible.builtin.import_tasks: claude.yml
+  tags: [claude]
+
+# ---- 個人選裝：toolchain ----------------------------------------------------
 - name: 容器 runtime（podman）
   ansible.builtin.import_tasks: podman.yml
   when: container_runtime == 'podman'
@@ -14,22 +23,18 @@
 
 - name: Go
   ansible.builtin.import_tasks: go.yml
+  when: install_go | bool
   tags: [go]
-
-- name: Claude Code
-  ansible.builtin.import_tasks: claude.yml
-  tags: [claude]
 
 - name: Python（uv）
   ansible.builtin.import_tasks: python.yml
-  when: install_python
+  when: install_python | bool
   tags: [python]
 
-- name: DB / cache clients
-  ansible.builtin.import_tasks: clients.yml
-  when: install_clients
-  tags: [clients]
+# 註：psql / redis-cli 以前是獨立的 clients.yml + install_clients 開關，現在併進
+# defaults 的 dev_env_packages —— 它們本來就只是 apt 一句話，不值得一個 task 檔。
 
+# ---- 收尾 -------------------------------------------------------------------
 # 放最後：~/.profile 的內容取決於上面裝了什麼（PATH 項目、DOCKER_HOST）。
 - name: ~/.profile 環境設定
   ansible.builtin.import_tasks: profile.yml

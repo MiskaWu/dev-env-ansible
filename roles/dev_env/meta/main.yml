@@ -4,9 +4,10 @@ galaxy_info:
   namespace: miskawu
   author: miskawu
   description: >-
-    Complete Linux development environment — baseline packages, rootless Podman,
-    Go, Claude Code, and an opt-in toolchain. WSL2-specific tasks are gated on an
-    is_wsl fact, so the same role runs on any Ubuntu host.
+    Linux development environment built around Claude Code — Claude Code and its
+    minimal dependencies are installed unconditionally; everything else (CLI
+    packages, Go, uv, rootless Podman) is opt-in. WSL2-specific tasks are gated on
+    an is_wsl fact, so the same role runs on any Ubuntu host.
   license: MIT
   # systemd_service 模組與 ansible_facts.user_uid 都需要較新的 core；2.15 以下沒驗過。
   min_ansible_version: "2.16"
