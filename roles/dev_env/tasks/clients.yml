@@ -6,10 +6,12 @@
     update_cache: true
     cache_valid_time: 3600
 
-# NATS CLI 走 go install；creates 保證只裝一次（在目標機上判斷，非 control node）。
-- name: Install NATS CLI via go install
-  ansible.builtin.command:
-    cmd: /usr/local/go/bin/go install github.com/nats-io/natscli/nats@latest
-    creates: "{{ ansible_facts.env.HOME }}/go/bin/nats"
-  environment:
-    PATH: "/usr/local/go/bin:{{ ansible_facts.env.PATH }}"
+# 改用官方 .deb。原本走 `go install`，讓 clients 隱性依賴「Go 已經裝好」——
+# `make apply TAGS=clients` 在乾淨機上會直接爆，而且每次新機都要現場編譯。
+# apt 認得已安裝版本，天生冪等。
+- name: Install NATS CLI
+  become: true
+  ansible.builtin.apt:
+    deb: >-
+      https://github.com/nats-io/natscli/releases/download/v{{ nats_version
+      }}/nats-{{ nats_version }}-{{ dev_env_arch }}.deb

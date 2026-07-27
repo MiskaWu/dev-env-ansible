@@ -1,31 +1,44 @@
 ---
-- import_tasks: detect.yml
+- name: 偵測環境（is_wsl / arch）
+  ansible.builtin.import_tasks: detect.yml
   tags: always
 
-- import_tasks: base.yml
+- name: 基礎套件
+  ansible.builtin.import_tasks: base.yml
   tags: [base]
 
-- import_tasks: podman.yml
+- name: 容器 runtime（podman）
+  ansible.builtin.import_tasks: podman.yml
   when: container_runtime == 'podman'
-  tags: [podman, runtime]
+  tags: [podman]
 
-- import_tasks: go.yml
+- name: Go
+  ansible.builtin.import_tasks: go.yml
   tags: [go]
 
-- import_tasks: claude.yml
+- name: Claude Code
+  ansible.builtin.import_tasks: claude.yml
   tags: [claude]
 
-- import_tasks: node.yml
+- name: Node
+  ansible.builtin.import_tasks: node.yml
   when: install_node
   tags: [node]
 
-- import_tasks: python.yml
+- name: Python（uv）
+  ansible.builtin.import_tasks: python.yml
   when: install_python
-  tags: [python, uv]
+  tags: [python]
 
-- import_tasks: clients.yml
+- name: DB / cache clients
+  ansible.builtin.import_tasks: clients.yml
   when: install_clients
   tags: [clients]
+
+# 放最後：~/.profile 的內容取決於上面裝了什麼（PATH 項目、DOCKER_HOST）。
+- name: ~/.profile 環境設定
+  ansible.builtin.import_tasks: profile.yml
+  tags: [profile]
 
 # 注意：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。

@@ -1,4 +1,5 @@
 ---
+# PATH（/usr/local/go/bin、$HOME/go/bin）與 GOTOOLCHAIN 由 profile.yml 統一管。
 - name: Resolve latest Go version
   ansible.builtin.uri:
     url: https://go.dev/VERSION?m=text
@@ -24,8 +25,8 @@
   block:
     - name: Download Go tarball
       ansible.builtin.get_url:
-        url: "https://go.dev/dl/{{ go_tag }}.linux-{{ go_arch }}.tar.gz"
-        dest: "/tmp/{{ go_tag }}.linux-{{ go_arch }}.tar.gz"
+        url: "https://go.dev/dl/{{ go_tag }}.linux-{{ dev_env_arch }}.tar.gz"
+        dest: "/tmp/{{ go_tag }}.linux-{{ dev_env_arch }}.tar.gz"
         mode: "0644"
 
     - name: Remove old Go
@@ -34,15 +35,11 @@
         path: /usr/local/go
         state: absent
 
+    # check mode 沒有真的下載 tarball，解壓會因為找不到來源而讓 dry-run 中止（假陽性）。
     - name: Extract Go to /usr/local
       become: true
       ansible.builtin.unarchive:
-        src: "/tmp/{{ go_tag }}.linux-{{ go_arch }}.tar.gz"
+        src: "/tmp/{{ go_tag }}.linux-{{ dev_env_arch }}.tar.gz"
         dest: /usr/local
         remote_src: true
-
-- name: Go PATH in ~/.profile
-  ansible.builtin.lineinfile:
-    path: "{{ ansible_facts.env.HOME }}/.profile"
-    line: 'export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"'
-    create: true
+      when: not ansible_check_mode

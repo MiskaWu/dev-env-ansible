@@ -8,7 +8,8 @@ galaxy_info:
     Go, Claude Code, and an opt-in toolchain. WSL2-specific tasks are gated on an
     is_wsl fact, so the same role runs on any Ubuntu host.
   license: MIT
-  min_ansible_version: "2.15"
+  # systemd_service 模組與 ansible_facts.user_uid 都需要較新的 core；2.15 以下沒驗過。
+  min_ansible_version: "2.16"
   platforms:
     - name: Ubuntu
       versions:

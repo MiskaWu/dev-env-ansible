@@ -1,82 +1,141 @@
 ---
+# 套件清單刻意寫明「靠 Recommends 會被帶進來、但少了就會壞」的那幾個：
+#   uidmap            newuidmap/newgidmap，rootless 的 uid 映射。沒有它 rootless 完全不能用
+#   passt             提供 pasta，podman 5 的預設 rootless 網路後端
+#   aardvark-dns      netavark 的 DNS server；compose 裡用服務名互連（app → postgres）靠它
+#   dbus-user-session systemd --user 的 D-Bus 整合，rootless podman.socket 需要
+# 這四個在 Ubuntu 上都只是 Recommends（aardvark-dns 甚至是 netavark 的 Recommends），
+# 一旦誰用 --no-install-recommends 就會靜默壞掉，不該碰運氣。
+#
+# 已移除：buildah / skopeo（podman build 內建 buildah 函式庫、podman image 覆蓋 skopeo
+# 的日常用途）、slirp4netns（podman 4 時代的網路後端，已被 pasta 取代）、
+# fuse-overlayfs（kernel 5.11+ rootless 可直接用 native overlay，本機是 6.6）。
 - name: Install Podman and rootless dependencies
   become: true
   ansible.builtin.apt:
-    name: [podman, buildah, skopeo, uidmap, slirp4netns, fuse-overlayfs]
+    name:
+      - podman
+      - uidmap
+      - passt
+      - aardvark-dns
+      - dbus-user-session
     update_cache: true
     cache_valid_time: 3600
 
-# --- WSL2-only：netavark 預設的 nftables driver 在 WSL2 kernel 上失敗，
-#     會弄壞每一個 compose bridge network。改用 iptables driver（xtables-nft 相容層）。
-- name: Install iptables (WSL2 netavark driver)
+# --- netavark firewall driver -------------------------------------------------
+# netavark 預設走 nftables（它的 Recommends 就是 nftables），但那個 driver 在 WSL2
+# kernel 上失敗，會弄壞每一個 compose bridge network。改用 iptables driver ——
+# 注意現代 Ubuntu 的 iptables 套件裝的其實是 iptables-nft 相容層，不是 legacy xtables。
+- name: Install iptables (netavark firewall driver)
   become: true
   ansible.builtin.apt:
     name: iptables
-  when: is_wsl
+  when: podman_firewall_driver == 'iptables'
 
-- name: containers.conf — iptables firewall driver
+- name: Ensure containers.conf.d exists
   become: true
-  ansible.builtin.copy:
-    dest: /etc/containers/containers.conf
+  ansible.builtin.file:
+    path: /etc/containers/containers.conf.d
+    state: directory
+    mode: "0755"
+
+- name: containers.conf.d — firewall driver drop-in
+  become: true
+  ansible.builtin.template:
+    src: 50-firewall-driver.conf.j2
+    dest: /etc/containers/containers.conf.d/50-firewall-driver.conf
     mode: "0644"
-    content: |
-      [network]
-      firewall_driver = "iptables"
-  when: is_wsl
+  when: podman_firewall_driver | length > 0
 
-# --- WSL2-only：WSL 的 `/` 是 private mount propagation（正常 systemd 系統開機時會把
-#     根設成 shared，WSL 沒做）。rootless podman 會警告
-#     `"/" is not a shared mount, ... missing mounts with rootless containers`，
-#     且容器內的 mount 傳播可能不正確（對 k3s 這種大量 mount 的東西特別有影響）。
-#     用開機早期的 oneshot systemd unit 把 / 設成 rshared，一勞永逸。
-- name: WSL — systemd unit 讓 / 在開機時變 rshared（rootless podman 需要）
+- name: Remove firewall driver drop-in when not needed
   become: true
-  ansible.builtin.copy:
+  ansible.builtin.file:
+    path: /etc/containers/containers.conf.d/50-firewall-driver.conf
+    state: absent
+  when: podman_firewall_driver | length == 0
+
+# Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats
+# → `podman pull postgres` 直接失敗。這是 Ubuntu-general，不 gate 在 is_wsl。
+- name: Ensure registries.conf.d exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/containers/registries.conf.d
+    state: directory
+    mode: "0755"
+
+- name: registries.conf.d — docker.io unqualified search
+  become: true
+  ansible.builtin.template:
+    src: 50-unqualified-search.conf.j2
+    dest: /etc/containers/registries.conf.d/50-unqualified-search.conf
+    mode: "0644"
+
+# --- 舊版遷移 -----------------------------------------------------------------
+# 這個 role 早期整檔覆寫 /etc/containers/{containers,registries}.conf。改用 .d drop-in
+# 後那兩個主檔是舊版殘留，留著會蓋掉 drop-in 的語意（特別是非 WSL 機器上殘留的
+# firewall_driver = iptables）。只在「該檔不屬於任何套件」時才移除，避免將來
+# containers-common 開始出貨這些檔案時誤刪。
+- name: Check whether /etc/containers main configs are package-owned
+  ansible.builtin.command: dpkg -S /etc/containers/containers.conf /etc/containers/registries.conf
+  register: _containers_conf_owner
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remove legacy whole-file configs superseded by drop-ins
+  become: true
+  ansible.builtin.file:
+    path: "/etc/containers/{{ item }}"
+    state: absent
+  loop:
+    - containers.conf
+    - registries.conf
+  when: _containers_conf_owner.rc != 0
+
+# --- WSL2-only：mount propagation --------------------------------------------
+# WSL 的 `/` 是 private mount propagation（正常 systemd 系統開機時會把根設成 shared，
+# WSL 沒做）。rootless podman 會警告 `"/" is not a shared mount, ... missing mounts
+# with rootless containers`，且容器內 mount 傳播可能不正確（k3s 這類大量 mount 的負載
+# 特別會踩到）。手動 mount --make-rshared / 不持久（wsl --shutdown 就沒了），必須走
+# 開機早期的 oneshot unit 才會每次開機生效。
+- name: WSL — rshared-root.service unit
+  become: true
+  ansible.builtin.template:
+    src: rshared-root.service.j2
     dest: /etc/systemd/system/rshared-root.service
     mode: "0644"
-    content: |
-      [Unit]
-      Description=Make / a shared mount for rootless podman (WSL leaves it private)
-      DefaultDependencies=no
-      After=local-fs.target
-      Before=sysinit.target
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/bin/mount --make-rshared /
-      RemainAfterExit=yes
-      [Install]
-      WantedBy=sysinit.target
   when: is_wsl
   register: _rshared_unit
 
+# check mode 下 unit 檔沒有真的寫出去，systemd 找不到它會讓整個 dry-run 中止
+# （`Could not find the requested service`）。那是 check mode 的假陽性，不是真錯誤，
+# 所以「check mode 且 unit 這次才會被建出來」時跳過。
 - name: WSL — enable rshared-root.service
   become: true
   ansible.builtin.systemd_service:
     name: rshared-root.service
     enabled: true
     daemon_reload: "{{ _rshared_unit is changed }}"
-  when: is_wsl
+  when:
+    - is_wsl
+    - not (ansible_check_mode and _rshared_unit is changed)
 
-# Ubuntu 完全不出貨 registries.conf，內建 short-name 別名表也沒有 postgres/redis/nats。
-- name: registries.conf — docker.io unqualified search
-  become: true
-  ansible.builtin.copy:
-    dest: /etc/containers/registries.conf
-    mode: "0644"
-    content: |
-      unqualified-search-registries = ["docker.io"]
-      short-name-mode = "disabled"
-
+# --- rootless 執行環境 --------------------------------------------------------
 - name: Enable linger so rootless services run without an active login
   become: true
   ansible.builtin.command: "loginctl enable-linger {{ ansible_facts.user_id }}"
   args:
     creates: "/var/lib/systemd/linger/{{ ansible_facts.user_id }}"
 
-- name: Install docker-compose shim binary
+- name: Install docker-compose binary (podman compose provider)
   become: true
   ansible.builtin.get_url:
-    url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-{{ ansible_facts.architecture }}"
+    url: >-
+      https://github.com/docker/compose/releases/download/v{{ compose_version
+      }}/docker-compose-linux-{{ ansible_facts.architecture }}
+    checksum: >-
+      sha256:https://github.com/docker/compose/releases/download/v{{ compose_version
+      }}/docker-compose-linux-{{ ansible_facts.architecture }}.sha256
     dest: /usr/local/bin/docker-compose
     mode: "0755"
   when: compose_shim
@@ -93,32 +152,33 @@
     state: directory
     mode: "0755"
 
+- name: Check podman user socket unit is present
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/user/podman.socket
+  register: _podman_socket_unit
+  check_mode: false
+
+# 實跑時 podman 已由上面的 apt task 裝好，這個 gate 一定成立；它存在只是為了 check
+# mode —— dry-run 沒有真的裝 podman，來源 unit 不在會讓整個 dry-run 中止（假陽性）。
 - name: Enable rootless podman.socket (symlink; no running user manager needed)
   ansible.builtin.file:
     src: /usr/lib/systemd/user/podman.socket
     dest: "{{ ansible_facts.env.HOME }}/.config/systemd/user/sockets.target.wants/podman.socket"
     state: link
+  when: _podman_socket_unit.stat.exists
 
 - name: Start podman.socket now (best-effort; WSL cold-start race may defer to next login)
   ansible.builtin.command: systemctl --user start podman.socket
   environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ login_uid }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ login_uid }}/bus"
-  register: _podman_sock
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts.user_uid }}/bus"
   changed_when: false          # best-effort 啟動不算變更（enable 的 symlink 才是）
   failed_when: false
 
-# 環境變數放 ~/.profile（.bashrc 對非互動 shell 提早 return，讀不到）。
-- name: DOCKER_HOST in ~/.profile
-  ansible.builtin.lineinfile:
-    path: "{{ ansible_facts.env.HOME }}/.profile"
-    line: 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
-    create: true
-
 # 使用者只用 podman，不要 alias docker=podman（避免 docker/podman 同名混淆）。
 # state: absent —— 套用時主動移除 .bashrc 裡那行（不只是不再加）。
-# 註：DOCKER_HOST 保留（指向 podman socket），compose 仍走 `podman compose`（用
-# docker-compose 二進位當 provider）與需要 Docker API 的工具（IDE / testcontainers）。
+# 註：DOCKER_HOST 保留（見 profile.yml），指向 podman socket，給 `podman compose`
+# 與需要 Docker API 的工具（IDE / testcontainers）用。
 - name: Remove docker=podman alias from ~/.bashrc（只用 podman）
   ansible.builtin.lineinfile:
     path: "{{ ansible_facts.env.HOME }}/.bashrc"
