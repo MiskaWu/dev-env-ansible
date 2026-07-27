@@ -1,7 +1,16 @@
 ---
 # creates 保證冪等：已裝就不再跑 installer。
 # ~/.local/bin 的 PATH 由 profile.yml 統一管。
+#
+# pipefail 是必要的，不是講究：`curl … | bash` 的 rc 取決於 pipeline 的**最後一個**指令，
+# 所以 curl 失敗（網路斷、404）時 bash 收到空輸入、乾淨結束，整條 pipeline 回 0
+# ——task 報成功，機器上卻沒有 binary，而 `creates` 是在**執行前**檢查、事後不驗，
+# 於是這個失敗會一路靜默到下次有人真的要用 claude。加了 pipefail 才會如實失敗。
+# 需要 executable: /bin/bash —— Ubuntu 的 /bin/sh 是 dash，pipefail 不是它的東西。
 - name: Install Claude Code (native installer)
   ansible.builtin.shell:
-    cmd: curl -fsSL https://claude.ai/install.sh | bash
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://claude.ai/install.sh | bash
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
+    executable: /bin/bash
