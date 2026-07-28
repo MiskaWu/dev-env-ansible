@@ -44,6 +44,36 @@
         remote_src: true
       when: not ansible_check_mode
 
+# --- symlink 進 /usr/local/bin -------------------------------------------------
+# 理由與實測證據寫在 node.yml 對應的那段（那裡的失敗形狀最有代表性）。一句話：
+# **`~/.profile` 只有登入 shell 會讀**，`wsl.exe -e` / systemd unit / cron / 未來的
+# `ssh dev '<cmd>'` 都拿不到 /usr/local/go/bin —— 實測 `wsl -d dev -e` 下 `go` 是
+# NOT FOUND。/usr/local/bin 則在那些 context 的預設 PATH 裡都有。
+#
+# **Go 走 symlink 不會弄壞 GOROOT**，這是這裡唯一需要另外驗的一點：go 指令是從自己
+# 執行檔的位置回推 GOROOT 的，過程會解 symlink。在只有 symlink 目錄的 `env -i` 環境
+# 實測 `go env GOROOT` = /usr/local/go、`GOTOOLCHAIN` = auto，正確。
+#
+# **守備範圍只有 go 與 gofmt**：`go install` 裝的執行檔落在 $HOME/go/bin，那條路徑非
+# 登入 shell 一樣看不到 —— 歸 profile.yml 的 PATH 管，兩者互補。
+#
+# 放在 block **外面**、`file: state=link` 冪等，理由同 node.yml。
+- name: Check Go binaries are in place
+  ansible.builtin.stat:
+    path: /usr/local/go/bin/go
+  register: _go_installed
+  check_mode: false
+
+# when 是為了 `--check`（乾跑沒真的解壓，來源不存在會讓 file: state=link 報錯）。
+- name: Symlink Go binaries into /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: "/usr/local/go/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop: [go, gofmt]
+  when: _go_installed.stat.exists
+
 # --- /tmp 收尾 ----------------------------------------------------------------
 # 一份 tarball 64MB，而 `go_version: latest` 每次上游走版就多留一份。
 #

@@ -160,6 +160,50 @@
     **條件要涵蓋「所有會往那行 PATH 塞路徑的項目」**，漏掉一個就是白白跳過清理
     （加 Node 時就補過一次）。只有全部都沒裝時，block 那行才會退化成跟清理目標逐字
     相同，那時才真的必須跳過。
+- **`~/.profile` 的 PATH 不夠 —— 裝在預設 PATH 之外的執行檔還要 symlink 進
+  `/usr/local/bin/`（2026-07-28 加，node 與 go 已做）。** `~/.profile` **只有登入 shell
+  會讀**，所以凡是**行程樹的根不是登入 shell** 的情境都拿不到它加的 PATH：`wsl.exe -e`、
+  systemd unit、cron、Windows 側程式 spawn 出來的東西，以及未來遠端管時的
+  `ssh dev '<cmd>'`（見檔頭「執行模型」——那會讓這個洞從偶爾變日常）。
+  **實測**（`wsl -d dev -e bash -c 'command -v …'`，非登入非互動）：
+
+  | 指令 | 解析到 |
+  |---|---|
+  | `node` / `go` / `claude` / `uv` | **NOT FOUND** |
+  | `npm` | **`/mnt/c/Program Files/nodejs/npm`** ← Windows 的 npm |
+
+  第二列才是重點：**不是「找不到」而是靜默用錯一支**，於是在 Linux 專案裡裝出
+  `*-win32-x64-msvc`（下面「PATH 順序」那條記的事故，同一個根因的另一個入口）。
+  - **`bash -c` / agent 本身沒問題，別把規則記成那樣。** `bash -c` **繼承**父行程的
+    PATH，從讀過 `.profile` 的 shell 開出去完全正常。判準是行程樹的根是誰，不是有沒有
+    `-c`。
+  - **`/usr/local/bin` 是對的落點**（實測都有，且排在 Windows 路徑**前面**）：`wsl -e`
+    第 2 位、systemd system manager、`systemd --user`、bash 編譯內建 fallback、
+    `/etc/environment`、cron 實跑一次確認。**cron 那格特別要注意**：`/usr/sbin/cron`
+    二進位裡是有 `/usr/bin:/bin` 這個舊 vixie 預設字串，但 Ubuntu 現在改成從環境繼承
+    （`/etc/crontab` 自己寫著），實跑拿到的含 `/usr/local/bin` —— **讀字串會得到相反
+    結論，要實跑**。另外 cron 的 PATH 裡完全沒有 Windows 路徑，所以 cron 只會「找不到」，
+    不會誤用 Windows 版；有 fallback 危險的只有 `wsl -e` 那條。
+  - **symlink 不會弄壞這兩個 runtime，但這是必須驗的一點**（換別的工具要重驗）：Go 從
+    自己執行檔的位置回推 GOROOT 時會解 symlink、node 解 realpath。在只有 symlink 目錄的
+    `env -i` 環境實測 `go env GOROOT`=`/usr/local/go`、`GOTOOLCHAIN`=auto、
+    `node -v` / `npm -v` / `npx -v` / `corepack -v` 全通。
+  - **守備範圍只有「安裝當下那幾個固定名字」，`profile.yml` 那份 PATH 不能拿掉。**
+    `npm i -g <pkg>` 的執行檔落在 `/usr/local/node/bin`（實測 `npm config get prefix`
+    = `/usr/local/node`）、`go install` 落在 `~/go/bin` —— 這些**裝完之後才多出來**的
+    都不會被 symlink 到。兩個機制互補：symlink 管固定入口，`.profile` 管後來長出來的。
+  - **移除端必須配套刪 symlink**（`uninstall.yml` 已加）。留著就是**指向不存在路徑的
+    symlink**，比找不到更糟：`command -v go` 仍然命中、一跑才爆。這跟 Claude 那段
+    「只刪 versions/ 會留下壞 symlink」是同一個陷阱。
+  - **加新工具時的判準**：裝完問一句「它的執行檔在不在
+    `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` 裡」。apt 裝的一律在
+    （`/usr/bin`），不必管；**tarball / installer 裝進自己目錄的就要 symlink**。
+    驗收方式是實跑 `wsl -d dev -e bash -c 'command -v <cmd>'`，不要用互動 shell 驗
+    ——互動 shell 讀過 `.profile`，一定是綠的，驗不出東西。
+  - **已知未修：`~/.local/bin` 的 `claude` 與 `uv` 有同樣的病**（上表實測 NOT FOUND），
+    但**不能用同一招** —— symlink 進 `/usr/local/bin` 要 root、而且 root 擁有的 symlink
+    指向某個使用者的 `$HOME`，在多帳號機器上語意是錯的。要修得另想方案（改 installer
+    的目標路徑、或 `/etc/profile.d` + 接受它同樣只對登入 shell 有效）。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、

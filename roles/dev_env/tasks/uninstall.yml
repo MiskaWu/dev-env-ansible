@@ -60,6 +60,16 @@
         path: /usr/local/go
         state: absent
 
+    # 必須跟著刪，否則會留下**指向不存在路徑的 symlink**。那比「找不到」更糟：
+    # `command -v go` 仍然命中 /usr/local/bin/go，一跑才爆 ENOENT。跟下面 Claude 那段
+    # 記的是同一個陷阱。
+    - name: 移除 Go 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: "/usr/local/bin/{{ item }}"
+        state: absent
+      loop: [go, gofmt]
+
     - name: Go —— 登記
       ansible.builtin.set_fact:
         _uninstall_done: "{{ _uninstall_done + ['go'] }}"
@@ -84,6 +94,16 @@
       ansible.builtin.file:
         path: /usr/local/node
         state: absent
+
+    # 同 Go：不刪就留下 dangling symlink，`command -v npm` 還命中 /usr/local/bin/npm，
+    # 一跑才爆。更糟的是 npm 這個名字在 WSL 上有 Windows 版接手，
+    # 「壞掉的 Linux npm」與「能跑的 Windows npm」哪個先被選中要看 PATH，難查。
+    - name: 移除 Node 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: "/usr/local/bin/{{ item }}"
+        state: absent
+      loop: [node, npm, npx, corepack]
 
     - name: Node —— 登記
       ansible.builtin.set_fact:
