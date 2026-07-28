@@ -14,3 +14,41 @@
       curl -fsSL https://claude.ai/install.sh | bash
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
     executable: /bin/bash
+
+# --- symlink 進 /usr/local/bin -------------------------------------------------
+# 理由與完整證據見 node.yml 那段：`~/.profile` 只有登入 shell 會讀，所以 `wsl.exe -e`、
+# systemd unit、cron、未來的 `ssh dev '<cmd>'` 都拿不到 ~/.local/bin。實測
+# `wsl -d dev -e bash -c 'command -v claude'` 是 NOT FOUND —— 對一個常被腳本以
+# `claude -p` 呼叫的工具來說，這比 go / node 更常踩到。
+#
+# **指向 ~/.local/bin/claude（那個 symlink），不要指向 versions/<版本>。** claude 會
+# 自動更新：寫一個新的 versions/<新版> 目錄，然後把 ~/.local/bin/claude 重新指過去。
+# 指在穩定路徑上，這條兩段鏈更新後照樣通；指到版本目錄則每次更新都變成 dangling。
+# 實測 `readlink -f` 從 /usr/local/bin/claude 一路解到 versions/2.1.220，且在只有
+# symlink 目錄的 `env -i` 環境下 `claude --version` 正常。
+#
+# ---- 這裡跟 go / node 有一個不同，要知道 ------------------------------------
+# 目標在 $HOME 底下，所以這個 root 擁有的 symlink 綁死了「某一個使用者」。
+# 這個 role 本來就是**一台機器供一個開發者用**的模型（寫 ~/.profile、~/.claude，
+# 把 claude / uv 裝進某個 $HOME，rootless podman 也只設一個 uid），所以「哪個使用者」
+# 在這個 role 裡不是模糊的。
+# **但它確實引入了一層以前沒有的跨使用者耦合**：~/.profile 只影響本人，
+# /usr/local/bin 的 symlink 會讓**別的使用者**也解析到這一個人的 binary。同一台機器
+# 上跑第二個使用者就是後寫的贏，而且是靜默的。真的要支援多使用者，逃生口是改成放一支
+# 解析 $HOME 的 wrapper script（`exec "${HOME:?}/.local/bin/claude" "$@"`，是真實檔案
+# 不是 shell function，所以非互動 shell 一樣拿得到）—— 現在不做，因為這台不是那種機器。
+- name: Check Claude Code binary is in place
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
+  register: _claude_bin
+  check_mode: false
+
+# when 是為了 `--check`：乾跑不會真的裝，來源不存在時 file: state=link 會報錯
+# （"src file does not exist"）。同 go.yml / node.yml。
+- name: Symlink Claude Code into /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
+    dest: /usr/local/bin/claude
+    state: link
+  when: _claude_bin.stat.exists
