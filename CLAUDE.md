@@ -77,11 +77,38 @@
   **但編譯工具鏈不進 `tools.yml`**：`build-essential` 不是「你會敲的工具」，是 Go（cgo）與
   uv（C extension）共用的前置，所以獨立成 `build-tools.yml`、掛在它們的 tag 底下。
   `tools.yml` 是「日常敲的東西」，別讓它變成什麼都往裡丟的雜物袋。
-- **這個 role 只裝不卸（使用者決定），卸載一律手動。** apt 的 `state: present` 只保證
-  「有」，所以從 `tools.yml` 刪掉一個 task 只是「以後不裝」，已經裝好的會留著。**不要**因此
-  去加一個「absent 清單 + `purge`」的機制、也不要加 `make uninstall`——那等於把破壞性
-  動作放進日常路徑，清單打錯一個字就照刪；移除交給使用者刻意執行。2026-07 加過又拿掉，
-  別再繞回來。
+- **反安裝分兩半：role 獨佔的路徑有 `make uninstall`，apt 的一律手動（2026-07-28 加）。**
+  分界線是**所有權**，不是難易度。`/usr/local/go`、`/usr/local/node`、
+  `~/.local/share/claude`、`~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的
+  東西，所以能自動化；apt 套件是**共同持有**的，移除的連帶結果取決於這台機器現在還裝了
+  什麼（同一個指令在兩台機器上結果不同），那是整個 repo 裡唯一一類「讀 playbook 讀不出
+  後果」的操作 —— 正確做法必然包含「人看過 `apt-get -s purge --autoremove` 的輸出再
+  決定」，**沒辦法替你做決定的動作，不該包成一個看起來會替你做決定的指令**。
+  `make uninstall TAGS=podman` 會被 Makefile 的 guard 擋下並印出手動步驟。
+  另一個不碰 apt 的現實理由：要在 uninstall 端模擬就得把套件名再抄一份，那份抄本一定
+  會漂移（list.yml 檔頭記過同一個教訓）。連抄都不抄就沒有這個問題。
+  **史實更正**：本條原本寫「2026-07 加過又拿掉，別再繞回來」——git 上查不到，`purge`
+  這個字從沒進過 repo、`Makefile` 也從沒有過 `uninstall` target。那應該是在對話裡提過
+  又否決、沒進版本庫。別花時間去找「舊實作」。
+  - **刻意沒有對稱的 `uninstall-check`。** ansible 的 `--check` 對移除給的是**假的
+    安全感**：它只說「這個 task 會 changed」，不會說 purge 某個套件會連帶帶走誰 ——
+    那個資訊只有 `apt-get -s purge --autoremove` 產得出來。乾跑印完一片綠字，你還是
+    得手動模擬一次才敢按，那個 target 什麼也沒買到，只是讓人以為自己看過了。
+  - **安全性由三件事提供**：① **必須點名 `TAGS`，不帶就拒絕**（跟 install 最重要的
+    不對稱 —— install 不帶 TAGS 是「全裝」，uninstall 不帶 TAGS 是「拒絕」，這個指令
+    **沒有「全砍」這個意思**）；② 只碰 role 獨佔的路徑；③ **工具與資料分開**，預設
+    只拿掉工具、資料留著並報告大小，要一起清得明確加 `DATA=1`。
+  - **`~/.claude` 任何情況下都不動**（設定 / 專案紀錄 / hooks / memory 是你的資料，
+    不是這個 role 裝的東西），連 `DATA=1` 也不碰。同理 `~/go` 預設保留 —— `go install`
+    裝的二進位跟模組快取在同一棵樹底下，沒辦法只刪一半又講得清楚。
+  - **走獨立的 `uninstall.yml` playbook，不併進 `site.yml`。** 因為 ansible 的
+    `--tags` 是 **OR** 語意：`--tags uninstall,go` 會把安裝 Go 的 task 一起選中，
+    tag 之間沒有 AND，「移除語境下的 go」沒辦法用 tag 組合表達。兩個 playbook 各自
+    有一份乾淨的 tag 命名空間，`make list` 印的是 site.yml 的、guard 兩份都問。
+  - **加新項目的判準**：只有「role 獨佔一整個目錄」的才適合進 `uninstall.yml`。
+- **apt 裝的東西只裝不卸，`state: present` 只保證「有」。** 從 `tools.yml` 刪掉一個
+  task 只是「以後不裝」，已經裝好的會留著。**不要**去加「absent 清單 + `purge`」的機制
+  ——清單打錯一個字就照刪，而且那正是上面說的「替你做了不該替你做的決定」。
   手動移除前先 `apt-get -s purge --autoremove <pkg>` 看影響範圍，發行版自帶的尤其要看：
   `tmux` 是 Ubuntu WSL base image 內建（跟 `byobu`、`ubuntu-wsl` 同一批裝進來，dpkg.log
   可查，所以 role 那行 `apt: tmux` 一直是 no-op），purge 它會連 `byobu` 和 `ubuntu-wsl`
