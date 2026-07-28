@@ -14,8 +14,12 @@
 # 刻意**不列舉 base 那四個套件的名字**：那是 base.yml 裡的字面值、這裡讀不到，抄過來
 # 就會漂移（jq 2026-07-27 升格時，這行原本抄的三個名字當場過期）。
 #
-# 偵測路徑挑「裝完一定會出現的檔案」。兩個用代理：build-tools 是 metapackage、沒有自己
-# 的檔案，用 /usr/bin/gcc；base 是一組套件，用其中最專屬的 /usr/bin/jq。
+# 偵測路徑挑「裝完一定會出現的檔案」。三個用代理：build-tools 是 metapackage、沒有自己
+# 的檔案，用 /usr/bin/gcc；base 是一組套件，用其中最專屬的 /usr/bin/jq；playwright 用
+# 字型檔而不是它裝的任何一個 .so，兩個理由 ——
+#   1. 那批 .so 少了會讓 chromium 當場起不來（大聲），字型少了卻是**靜默**的：測試全綠、
+#      只有截圖裡的中文變成豆腐。偵測要對準看不見的那個。
+#   2. .so 的路徑帶 arch（/usr/lib/x86_64-linux-gnu/…），字型檔的不帶。
 - name: 偵測已裝的項目
   ansible.builtin.stat:
     path: "{{ item.path }}"
@@ -38,6 +42,11 @@
       dep: false
       path: /usr/local/node/bin/node
       desc: Node.js {{ node_version }} LTS + npm（官方 tarball，不需要 nvm）
+    - tag: playwright
+      dep: false
+      path: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+      desc: >-
+        headless 瀏覽器的系統相依（.so + 中文字型；Playwright 本身與瀏覽器歸專案端）
     - tag: podman
       dep: false
       path: /usr/bin/podman
