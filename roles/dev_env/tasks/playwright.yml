@@ -1,0 +1,102 @@
+---
+# headless 瀏覽器的系統相依。**這個檔不裝 Playwright，也不下載瀏覽器** —— 它給的是
+# 「這台機器上的 chromium 起得來、而且畫得出中文」這個 OS 層能力。
+#
+# ---- 三層裡為什麼只有這一層歸機器 --------------------------------------------
+# Playwright 的東西分三層，切線是 root 與版本綁定：
+#
+#   1. 語言套件（@playwright/test、playwright-python…）  專案的套件管理器  不用 root
+#   2. 瀏覽器 binary → ~/.cache/ms-playwright            `playwright install`  不用 root
+#   3. 系統 .so + 字型                                    apt              **要 root**
+#
+# 只有第 3 層需要 root，也只有它跨語言共用 —— Playwright 有 Node / Python / Java / .NET
+# 四種綁定，這批 .so 對四者一模一樣。**所以這個檔不掛 `node`**：裝 chromium 的相依跟你
+# 打算用哪個語言驅動它無關，掛上去只會讓 Python 那條路平白拖一份 Node 進來。
+#
+# 第 2 層刻意不做，兩個理由都是實測來的：
+#   - 瀏覽器 build id 綁死語言套件的版本（實測 Playwright 1.59.x ↔ build 1217、
+#     1.62.x ↔ build 1234）。機器層不知道專案 pin 哪一版，猜錯就是下載一份沒人用的
+#     630MB，而專案那邊照樣得自己再抓一次。
+#   - `~/.cache/ms-playwright` 是 per-user 全域的，任一專案下載一次全機器共用 ——
+#     這件事本來就不需要機器層代勞。
+#
+# 對應到專案端要做的事就一句 `npx playwright install chromium`（或其他語言的等價指令）。
+#
+# ---- 已知的版本地雷（2026-07-28 在 Ubuntu 26.04 實測）------------------------
+# Playwright **1.61 之前不認得 Ubuntu 26.04**，而且失敗在下載階段就發生：
+#
+#     ERROR: Playwright does not support chromium on ubuntu26.04-x64
+#
+# 原因在它的 hostPlatform 偵測（`if (major < 26) return "ubuntu24.04"`），26.04 落到
+# fallback 分支變成一個沒有對應 build 的 platform 字串，`install-deps` 也一起失敗。
+# 這是**專案端**的問題，機器層修不了也不該修 —— 升到 1.61+ 就沒事（上游 issue #40117）。
+# 真的被迫留在舊版時，逃生口是 `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`
+# （**必須帶 `-x64`**，它是整個字串替換、不會自動補 arch），而且**只有下載時需要**，
+# 執行階段完全不用 —— 所以它不該進 `~/.profile`。
+#
+# 順帶一提，1.62 官方的 ubuntu26.04 chromium 清單跟 ubuntu24.04 的**一字不差**，就是
+# 下面這 21 個；下面的清單等於官方清單，不是我們自己湊的。
+
+# 21 個全列，不只列這台機器上缺的那幾個。理由跟 podman.yml 那批 Recommends 相同：
+# Ubuntu WSL base image 剛好已經帶了其中 18 個（實測只缺 libnspr4 / libnss3 /
+# libasound2t64），但那是**這個 base image 的巧合**，換一版映像檔或誰跑了
+# `--no-install-recommends` 就會少東西，而少了的失敗形狀是「chromium 起不來」。
+# apt 對已經裝好的是 no-op，全列不花成本，卻換掉一個「碰運氣」。
+- name: Install headless chromium system libraries
+  become: true
+  ansible.builtin.apt:
+    name:
+      - libasound2t64          # ALSA；chromium 一律連結它，即使無音訊也要
+      - libatk-bridge2.0-0t64  # ATK↔AT-SPI 橋接（無障礙）
+      - libatk1.0-0t64         # ATK 無障礙工具組
+      - libatspi2.0-0t64       # AT-SPI2；headless 也會載入
+      - libcairo2              # 2D 繪圖
+      - libcups2t64            # 列印子系統
+      - libdbus-1-3            # D-Bus IPC
+      - libdrm2                # DRM；GPU / 軟體算圖共用
+      - libgbm1                # GBM buffer 管理，headless 算圖走這條
+      - libglib2.0-0t64        # GLib 事件迴圈
+      - libnspr4               # NSPR，NSS 的前置
+      - libnss3                # NSS：憑證與加密 —— 少了它 HTTPS 直接不能用
+      - libpango-1.0-0         # 文字排版（字型的實際消費者）
+      - libx11-6               # X11 client
+      - libxcb1                # XCB
+      - libxcomposite1         # Composite 擴充
+      - libxdamage1            # Damage 擴充
+      - libxext6               # X11 擴充
+      - libxfixes3             # Xfixes 擴充
+      - libxkbcommon0          # 鍵盤映射
+      - libxrandr2             # RandR 擴充
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---- 字型：這一項防的是唯一一種「靜默」的失敗 --------------------------------
+# 上面少任何一個 .so，chromium 會直接起不來 —— 大聲、當場、不可能漏看。**字型不一樣**：
+# 沒有 CJK 字型時中文全部渲染成空心方框（豆腐字），但
+#
+#   - `textContent` / `getByRole({ name: "登入" })` / `toBeVisible()` 全部照過，
+#     因為它們讀的是 DOM，不是畫出來的像素；
+#   - 於是 e2e 全綠，而截圖裡的中文是一格一格的方塊。
+#
+# 實測差異（同一段文字，20px）：有字型「登入」寬 40.00、無字型 24.00 —— 差 40%，
+# 而且高度也從 27 掉到 24。所以它不只是「看起來醜」，版面寬度是真的不一樣，換行、溢出、
+# 點擊座標都可能跟著偏。但**沒有任何常見斷言在看寬度**，所以它不會讓測試變紅。
+#
+# 這也是 list.yml 拿字型檔（而不是某個 .so）當偵測路徑的原因：偵測要對準看不見的那個，
+# 會自己大聲喊的那些不需要幫忙。
+#
+# 只裝中文這一個。Playwright 官方 tools 清單裡另外還有日文（fonts-ipafont-gothic）、
+# 泰文（fonts-tlwg-loma-otf）、西里爾（xfonts-cyrillic）、emoji（fonts-noto-color-emoji）
+# 與 metric 相容字型（fonts-liberation），**都沒有實測證據說少了會壞**，就不裝 ——
+# 判準跟 base.yml 的 jq／ripgrep 那組對照一樣：指得出具體失敗才進來，「可能用得到」不算。
+# 真的遇到日文或 emoji 變豆腐，回來這裡多加一行就好。
+#
+# 也**不裝 xvfb 那批**（xvfb / xserver-common / libxaw7 … 共 11 個）：那是給 headed 模式
+# 在沒有 X server 的機器上用的，headless 完全不需要（實測跑得完整套 e2e）。WSL 另外還有
+# WSLg，真要 headed 也不必靠 xvfb。
+- name: Install CJK font for browser text rendering
+  become: true
+  ansible.builtin.apt:
+    name: fonts-wqy-zenhei    # 文泉驛正黑：繁簡都涵蓋，16MB；官方清單挑的也是它
+    update_cache: true
+    cache_valid_time: 3600

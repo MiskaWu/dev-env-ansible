@@ -82,6 +82,15 @@
   ansible.builtin.import_tasks: node.yml
   tags: [node]
 
+# 只給「chromium 起得來、畫得出中文」這個 OS 層能力，**不裝 Playwright 本身、也不下載
+# 瀏覽器** —— 那兩層綁專案的版本、又不需要 root，歸專案端（理由見 playwright.yml 檔頭）。
+#
+# **刻意不掛 `node`**：Playwright 有 Node / Python / Java / .NET 四種綁定，這批 .so 對
+# 四者一模一樣，掛上去只會讓 Python 那條路平白拖一份 Node 進來。
+- name: headless 瀏覽器系統相依（Playwright 等用）
+  ansible.builtin.import_tasks: playwright.yml
+  tags: [playwright]
+
 - name: 容器 runtime（podman）
   ansible.builtin.import_tasks: podman.yml
   tags: [podman]
