@@ -168,19 +168,19 @@
 - **nats / docker-compose 在 2026-07 移除**（用不到）。安裝方式都研究定案過，要加回來看
   README 的「版本管理」段與 git log —— 別重新從 `go install` /
   `releases/latest/download` 那些踩過的路開始。
-- **Node 2026-07-27 移除、2026-07-28 因為 `hydrogen/unrelay` 加回來（`TAGS=node`）。**
+- **Node 2026-07-27 移除、2026-07-28 因為真的有前端專案要用而加回來（`TAGS=node`）。**
   形狀跟移除前一樣（nodejs.org 官方 tarball → `/usr/local/node`，PATH 歸 `profile.yml`），
   這裡只記那次「加回來」查到的東西：
   - **`node_version` 明確 pin，刻意不支援 `latest`** —— 這點跟 `go_version` 相反，別為了
     一致性去改。Go 只有一條線，latest 永遠是「該用的那個」；Node 的**奇數版不進 LTS、
     只活半年**，追 latest 會定期把機器推到非 LTS 上。現值 `24.18.0`（active LTS，Krypton）。
   - **不需要版本管理器，理由不是「暫時將就」**：前端專案宣告的幾乎都是**地板**而不是 pin
-    （`unrelay` 沒有 `.nvmrc` / `.node-version` / `engines` / `volta` / `packageManager`，
-    真正的約束是 vite 8 的 `^20.19 || >=22.12`），一個 LTS 就蓋過去。真的硬衝突時隔離該待在
-    **專案層**（`unrelay` 自己就有一個 `node:22-bookworm-slim` 的 devcontainer，podman 已就緒），
+    —— 實測過的專案連 `.nvmrc` / `.node-version` / `engines` / `volta` / `packageManager`
+    都沒有，真正的約束來自工具鏈自己（例如 vite 8 要 `^20.19 || >=22.12`），一個 LTS
+    就蓋過去。真的硬衝突時隔離該待在**專案層**（專案自己帶 devcontainer，podman 已就緒），
     不是機器層。nvm / fnm 另有硬傷（shell function，非互動 shell 拿不到）；mise 技術上可行
     但沒有必要 —— 這條跟「不裝通用版本管理器」那條是同一個判斷。
-  - **PATH 順序不是理論問題，是實際發生過的事故。** 2026-07-28 在 `unrelay` 實測：Linux 端
+  - **PATH 順序不是理論問題，是實際發生過的事故。** 2026-07-28 實測：Linux 端
     沒有 node 時 `command -v npm` 拿到 `/mnt/c/Program Files/nodejs/npm`（Windows npm 11.6.2），
     於是那包 `node_modules` 整組是 `lightningcss-win32-x64-msvc` /
     `@rolldown/binding-win32-x64-msvc` / `@tailwindcss/oxide-win32-x64-msvc`，還缺 `.bin/vite`。
@@ -192,6 +192,28 @@
   - **`node.yml` 不掛 `base` / `build-tools`**：tarball 安裝的必經路徑只用到 `get_url` 與
     tar/xz（`xz-utils` 是 Ubuntu base 的 priority: important）。node-gyp 那類要編原生模組的
     是**某個 npm 套件**的相依、不是 Node 自己的 —— 真的遇到再點 `TAGS=build-tools`。
+- **`TAGS=playwright` 給的是「這台機器能跑 headless 瀏覽器」，不是 Playwright 本身
+  （2026-07-28 加）。** Playwright 的東西分三層，只有第三層歸機器，判準是**要不要 root**
+  與**綁不綁專案版本**：語言套件（歸專案）／瀏覽器 binary（歸專案）／系統 `.so` + 字型
+  （歸機器）。完整理由與 21 個套件的清單在 `playwright.yml` 檔頭。兩個容易走錯的地方：
+  - **不掛 `node`。** Playwright 有 Node / Python / Java / .NET 四種綁定，那批 `.so` 對
+    四者一模一樣；掛上去只會讓 Python 那條路平白拖一份 Node 進來。
+  - **不下載瀏覽器。** build id 綁死語言套件的版本（實測 1.59.x ↔ build 1217、
+    1.62.x ↔ 1234），機器層不知道專案 pin 哪版，猜錯就是一份沒人用的 630MB；而
+    `~/.cache/ms-playwright` 本來就是 per-user 全域的，任一專案抓一次全機器共用。
+  **字型是這個項目唯一的靜默失敗**，也是 `list.yml` 拿字型檔（而不是某個 `.so`）當偵測
+  路徑的原因：少了 `.so`，chromium 當場起不來，大聲到不可能漏；少了 CJK 字型卻是
+  **測試全綠、只有截圖裡的中文變豆腐** —— `textContent` / `getByRole` / `toBeVisible`
+  讀的都是 DOM，不是畫出來的像素。實測同一段 20px 文字，有字型「登入」寬 40.00、
+  無字型 24.00（差 40%，高度 27→24），所以版面是真的會偏，但沒有任何常見斷言在看寬度。
+  只裝中文一個字型；日文／泰文／西里爾／emoji 官方清單雖然有，**沒有實測證據說少了會壞
+  就不裝**（同 jq／ripgrep 那組判準）。`xvfb` 那批 11 個是 headed 模式用的，headless 實測
+  完全不需要。
+  **另記一個專案端的地雷**：Playwright **1.61 之前不認得 Ubuntu 26.04**，而且是下載階段
+  就擋（`ERROR: Playwright does not support chromium on ubuntu26.04-x64`），`install-deps`
+  一併失敗。那是專案升版就解決的事、機器層修不了；真的被迫留在舊版，逃生口是
+  `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`（**必須帶 `-x64`**，整字串替換不補
+  arch），而且**只有下載時需要、執行時不用，所以不該寫進 `~/.profile`**。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：
