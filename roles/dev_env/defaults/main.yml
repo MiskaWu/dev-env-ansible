@@ -1,7 +1,7 @@
 ---
 # 這裡只剩「**怎麼裝**」的參數，沒有「**裝不裝**」的開關 —— 後者 2026-07-28 整組移除了
 # （install_go / install_python / install_build_tools / container_runtime /
-# dev_env_packages）。要裝什麼由 tag 決定，入口是 `make install-<tag>`。
+# dev_env_packages）。要裝什麼由 tag 決定，入口是 `make install TAGS=<項目>`。
 #
 # 為什麼拿掉：本來同時有兩套選擇機制 —— 布林開關（宣告式：「這台機器的定義包含 Go」）
 # 與 tag（命令式：「這次只跑這段」）。這個 repo 的定位是「協助把 Claude 開發環境準備
@@ -13,7 +13,7 @@
 #   - tag 與開關不同步（`TAGS=go` 不帶 profile）
 #
 # 代價（明確記著）：**沒有「一句話把這台機器收斂回我要的組合」了**。以前讀 group_vars
-# 就知道這台該有什麼；現在得自己記得裝過哪些，或用 `make install-all` 暴力全裝。
+# 就知道這台該有什麼；現在得自己記得裝過哪些，或用不帶 TAGS 的 `make install` 暴力全裝。
 # `make list` 會偵測機器上實際有什麼來補這個缺口。
 
 # Go 的目標版本。'latest' 表示「每次 install 都查 go.dev」，會跟著上游走版；要凍住就

@@ -1,70 +1,86 @@
 ---
 # `make list` 專用：印出「有哪些可裝的項目、這台機器上已經有哪些」。
-# tag 是 [list, never] —— `never` 保證一般的 install / check 絕不會跑到它，要跑只能
-# 明確 `--tags list`。整個檔唯讀（只有 stat 與 debug）。
+# tag 是 [list, never] —— `never` 保證一般的 install 絕不會跑到它（包含不帶 TAGS 的
+# 全裝），要跑只能明確 `--tags list`。整個檔唯讀（只有 stat 與 debug）。
 #
-# ---- 這個檔在新模型下的角色變了 ----------------------------------------------
-# 以前它印的是「開關求值後的結果」（install_go = True 之類）。開關 2026-07-28 移除後，
-# 沒有東西記著「這台機器該有什麼」—— 所以它改成**偵測機器上實際有什麼**。這正是移除
-# 宣告式那層之後留下的缺口，由這裡補上。
+# ---- 這個檔的角色 ------------------------------------------------------------
+# 布林開關 2026-07-28 移除後，沒有任何地方記著「這台機器該有什麼」—— 所以它印的 ✓／·
+# 是**當場 stat 出來**的實機狀態。這正是拿掉宣告式那層之後留下的缺口，由這裡補上。
 #
-# 仍然手寫的只有下面那份 loop 清單（指令、說明、偵測路徑）。**往 main.yml 加一個
-# import 時記得回來補一筆**；✓／· 是 stat 出來的，不會騙人。tag 有沒有漏也不必擔心，
-# `make list` 最後會直接跟 playbook 要一次真實的 tag 清單。
+# 仍然手寫的只有下面那份 loop 清單（tag、說明、偵測路徑）。**往 main.yml 加一個 import
+# 時記得回來補一筆**；tag 有沒有漏不必擔心，`make list` 結尾會直接跟 playbook 要一次
+# 真實的 tag 清單。
 #
-# 刻意**不列舉 core 套件的名字**：那份清單是 core.yml 裡的字面值、這裡讀不到，抄過來
-# 就會漂移（jq 2026-07-27 升格為 core 時，這行原本抄的三個名字當場過期）。
+# 刻意**不列舉 base 那四個套件的名字**：那是 base.yml 裡的字面值、這裡讀不到，抄過來
+# 就會漂移（jq 2026-07-27 升格時，這行原本抄的三個名字當場過期）。
 #
-# 偵測路徑的選法：挑那個項目**裝完一定會出現的檔案**。build-essential 用 /usr/bin/gcc
-# 當代理（它是 metapackage，沒有自己的檔案）。
+# 偵測路徑挑「裝完一定會出現的檔案」。兩個用代理：build-tools 是 metapackage、沒有自己
+# 的檔案，用 /usr/bin/gcc；base 是一組套件，用其中最專屬的 /usr/bin/jq。
 - name: 偵測已裝的項目
   ansible.builtin.stat:
     path: "{{ item.path }}"
   register: _list_probe
   check_mode: false
   loop:
-    - cmd: make install
+    - tag: claude
+      dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
-      desc: core：Claude Code + 它的 4 個 apt 相依 + ~/.profile（這個 repo 的存在理由）
-    - cmd: make install-go
+      desc: Claude Code —— 這個 repo 的存在理由
+    - tag: go
+      dep: false
       path: /usr/local/go/bin/go
-      desc: Go {{ go_version }}（自動帶 build-essential；GOTOOLCHAIN=auto 管專案版本）
-    - cmd: make install-python
+      desc: Go {{ go_version }}（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
+    - tag: python
+      dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
-      desc: uv（自動帶 build-essential；uv 自己也管 Python 版本，所以不需要 pyenv）
-    - cmd: make install-podman
+      desc: uv（自己也管 Python 版本，所以不需要 pyenv）
+    - tag: podman
+      dep: false
       path: /usr/bin/podman
       desc: >-
         rootless Podman + DOCKER_HOST（firewall driver:
         {{ podman_firewall_driver | default('', true) | ternary(podman_firewall_driver, '發行版預設') }}）
-    - cmd: make install-build-tools
-      path: /usr/bin/gcc
-      desc: build-essential —— 上面 go / python 會自動帶，單獨要編譯器時才需要手動點
-    - cmd: make install-lazygit
+    - tag: lazygit
+      dep: false
       path: /usr/bin/lazygit
       desc: lazygit（git 的 TUI）
-    - cmd: make install-unzip
+    - tag: unzip
+      dep: false
       path: /usr/bin/unzip
       desc: unzip（不少 release 只出 zip）
+    - tag: base
+      dep: true
+      path: /usr/bin/jq
+      desc: claude / uv 的 installer 相依（清單見 base.yml）
+    - tag: build-tools
+      dep: true
+      path: /usr/bin/gcc
+      desc: build-essential —— Go cgo / uv C extension 的前置
   loop_control:
-    label: "{{ item.cmd }}"
+    label: "{{ item.tag }}"
 
 - name: 可安裝項目一覽
   ansible.builtin.debug:
     msg: |-
       可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
-      {% for r in _list_probe.results %}
+      {% for r in _list_probe.results | rejectattr('item.dep') %}
 
-        {{ '✓' if r.stat.exists else '·' }} {{ r.item.cmd.ljust(24) }} {{ r.item.desc }}
+        {{ '✓' if r.stat.exists else '·' }} {{ r.item.tag.ljust(12) }} {{ r.item.desc }}
       {%- endfor %}
 
 
-      整批的叫法：
-        make install-tools     上面所有 CLI 小工具（lazygit、unzip…）
-        make install-all       全部，暴力裝
+      相依層 —— 上面的項目會自動帶進來，很少需要自己點：
+      {% for r in _list_probe.results | selectattr('item.dep') %}
 
-      先看不動手：把 install 換成 check，例如
-        make check-podman      乾跑預覽這一項會改什麼（--check --diff）
+        {{ '✓' if r.stat.exists else '·' }} {{ r.item.tag.ljust(12) }} {{ r.item.desc }}
+      {%- endfor %}
 
-      相依是自動的：install-python / install-go 會把 build-essential 一起帶進來，
-      任何會影響 PATH 的項目也都會順便更新 ~/.profile —— 不必自己補 tag。
+
+      怎麼用：
+        make install TAGS=claude      裝一項
+        make install TAGS=go,python   裝多項，一次 ansible run 做完
+        make install                  全裝（不帶 TAGS 就是不帶 --tags）
+        make check TAGS=podman        乾跑預覽這一項會改什麼
+
+      相依是自動的：TAGS=python 會把 base 與 build-tools 一起帶進來，任何會影響 PATH
+      的項目也都會順便更新 ~/.profile —— 不必自己列。

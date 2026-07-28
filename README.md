@@ -3,17 +3,22 @@
 把一台 Linux 裝成開發環境的 Ansible role。定位很窄：**協助把 Claude Code 的開發環境
 準備起來**，其他工具都是選用的。
 
-- **core（`make install` 就這些）** —— Claude Code，以及它與這個 repo 本身的最低相依
-  （`ca-certificates`、`curl`、`git`、`jq`）。這層沒得選，因為關掉就沒有這個 repo 了。
-  （`jq` 在 2026-07-27 從選裝升上來 —— Claude Code 的官方 installer 解 manifest checksum
-  的首選路徑就是它，少了它會退回脆弱的 bash regex；理由與實測數字在 `core.yml` 的註解。）
-- **其餘一律自己點名** —— 語言 toolchain（Go、uv）、容器 runtime（rootless Podman）、
-  順手的 CLI 工具（lazygit、unzip）。**用到時再裝**：`make install-go`、
-  `make install-python`、`make install-lazygit`；懶得挑就 `make install-all`。
+```bash
+make init                     # 起手：只補上 ansible-core，並印出下一步
+make install TAGS=claude      # 裝 Claude Code（相依自動帶）
+make install TAGS=go,python   # 挑幾項，一次做完
+make install                  # 全裝
+make list                     # 有哪些可裝、這台已經有哪些
+```
 
-**相依會自動帶進來。** `make install-python` 會順便裝 `build-essential`（uv 遇到沒有
-預編譯 wheel 時要現場編 C extension），`make install-go` 也一樣（cgo）；任何會影響 PATH
-的項目都會順手更新 `~/.profile`。你不必知道誰需要誰。
+**沒有「無條件裝」的東西 —— 連 Claude 都是一個要點名的項目。** 這個 repo 的定位表現在
+`make init` 的指引與 `make list` 的排序上，不表現在偷偷幫你裝東西。真正基礎到不能選的
+只有 ansible 本身，那個歸 `make init`。
+
+**相依會自動帶進來，你不必知道誰需要誰。** `TAGS=python` 會順便裝 `build-essential`
+（uv 遇到沒有預編譯 wheel 時要現場編 C extension）與 `curl` / `ca-certificates`
+（installer 要）；`TAGS=claude` 會帶 `curl` / `jq`；任何會影響 PATH 的項目都會順手更新
+`~/.profile`。
 
 （git 身分與 SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在 bring-up 就備好，
 因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。）
@@ -22,26 +27,34 @@
 純 Ubuntu VM、homelab 節點或 WSL distro。搭配 [`wsl-bootstrap`](../wsl-bootstrap)：它產出一台
 已開 systemd、可連的 WSL distro，讓你在上面接手裝軟體。
 
-## 怎麼選要裝什麼：tag，不是開關
+## 怎麼選要裝什麼：`TAGS=`，不是開關
 
 2026-07-28 之前這個 repo 有一整組布林開關（`install_go`、`install_python`、
 `container_runtime`…），寫在 `group_vars` 裡宣告「這台機器該有什麼」，再由 `make apply`
 收斂過去。**那層整組移除了** —— 既然定位是「Claude 環境 + 用到時再裝的東西」，宣告式
-那套就是多餘的第二種選擇機制。現在 tag 本身就是選擇：
+那套就是多餘的第二種選擇機制。現在 tag 本身就是選擇，指令只有一個：
 
 ```bash
-make install              # core：Claude Code + 它的相依 + ~/.profile
-make install-go           # Go（自動帶 build-essential，自動更新 PATH）
-make install-python       # uv（同上）
-make install-podman       # rootless Podman + DOCKER_HOST
-make install-lazygit      # 單一小工具
-make install-tools        # 所有 CLI 小工具
-make install-all          # 暴力：全部
+make install                    # 不帶 TAGS = 不帶 --tags = 全裝
+make install TAGS=claude        # 一項
+make install TAGS=go,python     # 多項，一次 ansible run 做完
+make check   TAGS=podman        # 乾跑預覽同一件事
 ```
+
+`make install` 不帶 `TAGS` 就是全裝，跟底層 `ansible-playbook` 不帶 `--tags` 一對一 ——
+**刻意沒有隱藏的預設值**。要只裝 Claude 就明確寫 `TAGS=claude`。
+
+**相依用 tag 表達，不是布林運算式。** `base.yml` 在 `main.yml` 掛
+`[base, claude, python]`、`build-tools.yml` 掛 `[build-tools, go, python]`，於是
+`--tags python` 自動把兩者都帶進來。將來多一個需要編譯器的東西，只要在它的 import 多掛
+一個 tag。
 
 一起消失的三個坑：相依關係不必再寫成布林運算式；`-e install_go=false` 傳字串 `"false"`
 進 Jinja 被當 truthy 那類 `| bool` 陷阱沒有了；「單跑一個 tag 不會帶到 `profile`」也不再
 需要記 —— `profile` 掛在每個會影響環境變數的 tag 底下。
+
+打錯字會被擋：ansible 對不存在的 tag 不報錯、只是什麼都不做，所以 Makefile 在動作前先
+比對一次真實的 tag 清單（`make install TAGS=clade` → exit 2）。
 
 **代價講清楚**：沒有「一句話把這台機器收斂回我要的組合」了。以前讀 `group_vars` 就知道
 這台該有什麼，現在得自己記得裝過哪些 —— 所以 `make list` 改成**偵測機器上實際有什麼**，
@@ -60,20 +73,21 @@ dev-env-ansible/
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
-        ├── core.yml            # core 套件                            (tags: core)
-        ├── claude.yml          # Claude Code（native installer）      (tags: [core, claude])
-        ├── tools.yml           # CLI 小工具，每個 task 自帶 tag       (tags: tools + 各自)
+        ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, python])
         ├── build-tools.yml     # build-essential      (tags: [build-tools, go, python])
+        ├── claude.yml          # Claude Code（native installer）      (tags: claude)
+        ├── tools.yml           # CLI 小工具，每個 task 自帶 tag       (tags: tools + 各自)
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
         └── profile.yml         # ~/.profile 單一 managed block
-                                #        (tags: [profile, core, go, python, podman])
+                                #      (tags: [profile, claude, go, python, podman])
 ```
 
-**相依關係就寫在 `main.yml` 的 tag 上。** `build-tools.yml` 掛 `[build-tools, go, python]`，
-所以 `--tags python` 會自動把編譯工具鏈帶進來 —— 將來多一個需要編譯器的東西，只要在它的
-import 多掛一個 tag。
+**相依關係就寫在 `main.yml` 的 tag 上。** 前兩個是相依層 —— `base.yml` 掛
+`[base, claude, python]`（那兩個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
+`[build-tools, go, python]`。所以 `--tags python` 會自動把兩者都帶進來。`go.yml` 沒掛
+`base` 是因為它走 ansible 的 `get_url`，不呼叫 `curl` 二進位。
 
 **要多裝一個 apt 小工具，在 `tools.yml` 加一個帶自己 tag 的 task**，不要開新的 task 檔 ——
 獨立檔案是留給「需要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`
@@ -95,7 +109,13 @@ git clone /mnt/c/Users/MiskaWu/Projects/dev-env-ansible ~/projects/dev-env-ansib
 cd ~/projects/dev-env-ansible
 ```
 
-**2. 先看有什麼可裝。**
+**2. 起手 —— 只補上 ansible。**
+
+```bash
+make init     # 裝 ansible-core（bring-up 沒給），並印出下一步
+```
+
+**3. 先看有什麼可裝。**
 
 ```bash
 make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
@@ -105,38 +125,44 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 跑出來的為準）：
 
 ```
-  ✓ make install             core：Claude Code + 它的 4 個 apt 相依 + ~/.profile
-  · make install-go          Go latest（自動帶 build-essential）
-  · make install-python      uv（自動帶 build-essential）
-  ✓ make install-podman      rootless Podman + DOCKER_HOST（firewall driver: iptables）
-  · make install-build-tools build-essential —— go / python 會自動帶
-  · make install-lazygit     lazygit（git 的 TUI）
-  · make install-unzip       unzip
+可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
+
+  · claude       Claude Code —— 這個 repo 的存在理由
+  · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
+  · python       uv（自己也管 Python 版本，所以不需要 pyenv）
+  · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
+  · lazygit      lazygit（git 的 TUI）
+  · unzip        unzip（不少 release 只出 zip）
+
+相依層 —— 上面的項目會自動帶進來，很少需要自己點：
+
+  · base         claude / uv 的 installer 相依（清單見 base.yml）
+  · build-tools  build-essential —— Go cgo / uv C extension 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    always build-tools claude core go lazygit list podman profile python tools unzip
+    always base build-tools claude go lazygit list podman profile python tools unzip
 ```
 
-**3. 裝。**
+**4. 裝。**
 
 ```bash
-make init                 # 補 ansible → 裝 core（Claude）→ 印收尾清單
-make install-python       # 之後用到什麼再裝什麼
-make install-all          # 或一次全裝
+make install TAGS=claude        # 這個 repo 的存在理由，先裝它
+make install TAGS=go,python     # 之後用到什麼再裝什麼
+make install                    # 或一次全裝
 ```
 
-只想先看不動手：`make check-python`（單項乾跑）或 `make check`（全部）。tag 打錯字
+只想先看不動手：`make check TAGS=python`（或不帶 TAGS 看全部）。tag 打錯字
 **ansible 自己不會報錯、只會什麼都不做**，所以 Makefile 在動作前先比對一次真實的 tag
-清單，不存在就直接失敗（`make install-pythn` → exit 2）。
+清單，不存在就直接失敗（`make install TAGS=clade` → exit 2）。
 
-**4. 裝了 podman 的話，回 Windows 端 full shutdown。** 讓 rootless `podman.socket` 在乾淨
+**5. 裝了 podman 的話，回 Windows 端 full shutdown。** 讓 rootless `podman.socket` 在乾淨
 session 起來（原因見下）：
 
 ```powershell
 wsl --shutdown
 ```
 
-**5. 收尾**（手動接上平台，刻意不自動化）。SSH keys 與 git 身分 bring-up 已備好，剩貼與認證：
+**6. 收尾**（手動接上平台，刻意不自動化）。SSH keys 與 git 身分 bring-up 已備好，剩貼與認證：
 
 ```bash
 wsl -d dev
@@ -167,10 +193,10 @@ podman rm -f svc && podman network rm t
 ```bash
 cd ~/projects/dev-env-ansible
 git pull                 # 若遠端有更新
-make list                # 忘了有哪些項目 / 這台裝了哪些 —— 唯讀，不會動到機器
-make check-podman        # 預覽某一項會動什麼（diff）；LOCAL 預設 1，在 distro 內不用帶
-make install-podman      # 套用
-make install-all         # 或把已裝的全部重跑一次（會跟著上游走版，例如 Go latest）
+make list                    # 忘了有哪些項目 / 這台裝了哪些 —— 唯讀，不會動到機器
+make check   TAGS=podman     # 預覽某一項會動什麼（diff）；LOCAL 預設 1，在 distro 內不用帶
+make install TAGS=podman     # 套用
+make install                 # 或把全部重跑一次（會跟著上游走版，例如 Go latest）
 ```
 
 `list` 與 `check` 回答的是不同問題，兩個都留著：**`list` 是「有哪些東西可裝、這台已經有
@@ -211,7 +237,7 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 
 | 變數 | 預設 | 控制 |
 |---|---|---|
-| `go_version` | `latest` | `latest` **每次 `make install-go` 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
+| `go_version` | `latest` | `latest` **每次跑到 `go` 這個 tag 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
 | `podman_firewall_driver` | WSL 上 `iptables`，否則 `nftables` | netavark firewall driver。**一律明寫**，因為 netavark 的預設是編譯期決定的、換發行版就可能不同。可用 `iptables` / `nftables` / `firewalld` / `none`，或 `''` 表示完全不管 |
 
 **這個 role 只裝不卸。** 沒有「解除安裝」的目標，也刻意不做 —— 卸載是破壞性動作，不該由
@@ -223,6 +249,6 @@ hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell func
 **實測體積**（讓取捨有依據）：`build-essential` 260MB / 43 個套件，跟 Go 的 269MB、
 Claude Code 的 263MB 同級 —— 它不是異常值。相對地整份 CLI 小工具只有約 24MB。
 所以該不該裝 `build-essential` 的判準是「你編不編 native 東西」，不是體積 ——
-而多數時候你不必自己判斷，`install-go` / `install-python` 會替你帶進來。
+而多數時候你不必自己判斷，`TAGS=go` / `TAGS=python` 會替你帶進來。
 
 （SSH keys / git 身分的設定在 `wsl-bootstrap` 的 `config.ps1`，不在這裡。）

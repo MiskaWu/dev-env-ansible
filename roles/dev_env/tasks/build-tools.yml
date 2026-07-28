@@ -4,11 +4,11 @@
 # wheel 而要現場編 C extension 時都靠它。
 #
 # **相依關係寫在 main.yml 的 tag 上**（這個檔被 import 時掛 `[build-tools, go, python]`），
-# 所以 `make install-python` 會自動把它帶進來，不需要以前那個
+# 所以 `make install TAGS=python` 會自動把它帶進來，不需要以前那個
 # `install_build_tools: "{{ install_go or install_python }}"` 布林運算式 —— 將來多一個
 # 要編譯器的東西，只要在 main.yml 那行多掛一個 tag，不必回頭改運算式。
 #
-# 也可以單獨要：`make install-build-tools`（在沒有 Go / uv 的機器上手動編東西是正當用途）。
+# 也可以單獨要：`make install TAGS=build-tools`（在沒有 Go / uv 的機器上手動編東西是正當用途）。
 #
 # 體積是這份設定裡最大的單項（連相依約 260MB / 43 個套件，跟 Go 的 269MB 同級），但缺它的
 # 失敗訊息很難認（`exec: gcc: not found`、`error: command 'cc' failed`），而且總在你正在忙
