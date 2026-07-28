@@ -1,0 +1,96 @@
+---
+# PATH（/usr/local/node/bin）由 profile.yml 統一管 —— 跟 go.yml 同一個模式。
+#
+# ---- 為什麼不用 nvm / fnm（也不用 mise）--------------------------------------
+# nvm 是 shell function，且 install.sh 在 bash 下只寫 ~/.bashrc，而 Ubuntu 的 .bashrc
+# 開頭對非互動 shell 直接 return —— 於是 `wsl -d dev -e node`、cron、IDE、ansible 全都
+# 拿不到 node。2026-07 大整理前這個 repo 就是這樣，`wsl -d dev -e node -v` 一直找不到。
+# fnm 同樣靠 shell hook，一樣不行。mise 有 shims 那條真實路徑所以「能用」，但版本管理器
+# 值錢是在「A 專案要 20、B 專案要 26」的時候 —— 現役專案宣告的是**地板**（vite 8 要
+# ^20.19 || >=22.12）而不是 pin，一個 LTS 就蓋過去了。真的出現衝突時，隔離該待在專案層
+# （devcontainer），不是機器層。
+#
+# ---- 為什麼不用 apt ----------------------------------------------------------
+# Ubuntu 的 nodejs 套件不含 npm（npm 是 Suggests），而 apt 的 npm 停在 9.2.0
+# （Node 24 上游配的是 npm 11.x）還會拖進約 70 個 node-* 套件。官方 tarball 附帶版本
+# 相符的 npm 與 corepack，是真實路徑的 binary，非互動 shell 天然可用。
+#
+# ---- 沒有掛 base / build-tools ------------------------------------------------
+# tarball 安裝的必經路徑上只用到 get_url + tar/xz（xz-utils 是 Ubuntu base 的
+# priority: important，本來就在）。node-gyp 那類要編原生模組的情境才需要編譯器，
+# 那是「某個專案的 npm 套件」的相依、不是 Node 自己的 —— 真的遇到再點 TAGS=build-tools。
+
+# nodejs.org 的拼法是 x64 / arm64，不是 detect.yml 那個 Debian 風格的 amd64 —— 那個
+# fact 的註解本來就警告過各家拼法不一致，這裡照 nodejs.org 的來。
+- name: Set Node arch
+  ansible.builtin.set_fact:
+    node_arch: "{{ 'arm64' if dev_env_arch == 'arm64' else 'x64' }}"
+
+- name: Check installed Node version
+  ansible.builtin.command: /usr/local/node/bin/node --version
+  register: node_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# 冪等：目標版本已在就整段跳過。
+- name: Install Node v{{ node_version }}
+  when: (node_current.stdout | default('') | trim) != ('v' + node_version)
+  block:
+    # checksum 指向上游的 SHASUMS256.txt，get_url 會自己從那份清單裡挑對應檔名的那行。
+    - name: Download Node tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://nodejs.org/dist/v{{ node_version }}/node-v{{ node_version
+          }}-linux-{{ node_arch }}.tar.xz
+        checksum: "sha256:https://nodejs.org/dist/v{{ node_version }}/SHASUMS256.txt"
+        dest: "/tmp/node-v{{ node_version }}-linux-{{ node_arch }}.tar.xz"
+        mode: "0644"
+
+    - name: Remove old Node
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/node
+        state: absent
+
+    - name: Create /usr/local/node
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/node
+        state: directory
+        mode: "0755"
+
+    # tarball 內是 node-vX.Y.Z-linux-arch/ 一層，strip 掉才會直接落在 /usr/local/node。
+    # check mode 沒有真的下載 tarball，解壓會因為找不到來源而讓 dry-run 中止（假陽性）。
+    - name: Extract Node to /usr/local/node
+      become: true
+      ansible.builtin.unarchive:
+        src: "/tmp/node-v{{ node_version }}-linux-{{ node_arch }}.tar.xz"
+        dest: /usr/local/node
+        remote_src: true
+        extra_opts: [--strip-components=1]
+      when: not ansible_check_mode
+
+# --- /tmp 收尾 ----------------------------------------------------------------
+# 跟 go.yml 同一套理由：/tmp 是 tmpfs（RAM-backed），一份 tarball 約 30MB 就這樣佔著
+# 記憶體，而且每 pin 到一個新版就多留一份。
+#
+# 刻意放在上面那個 block **外面** —— 擺在 block 裡只會清掉「這次剛裝的那一份」，之前
+# 換版留下的舊 tarball 永遠沒人收，而那才是會累積的那些。留著也沒有加速效果：判「要不要
+# 裝」看的是 `node --version`，不看 tarball 在不在。
+# pattern 綁死 node-v*-linux-<arch>.tar.xz 這個夠窄的形狀，不會誤掃到別人放在 /tmp 的檔案。
+- name: Find leftover Node tarballs in /tmp
+  ansible.builtin.find:
+    paths: /tmp
+    patterns: "node-v*-linux-{{ node_arch }}.tar.xz"
+  register: _node_tarballs
+  changed_when: false
+  check_mode: false
+
+- name: Remove leftover Node tarballs
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _node_tarballs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"

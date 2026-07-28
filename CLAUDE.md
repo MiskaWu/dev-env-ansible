@@ -130,9 +130,33 @@
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
   Python 靠 uv，兩者都不需要外部工具。要推翻這個決定前先看 README 的「版本管理」段，
   那裡有完整理由與各方案的取捨。
-- **Node / nats / docker-compose 在 2026-07 移除**（用不到）。三者的安裝方式都研究定案過，
-  要加回來看 README 的「版本管理」段與 git log —— 別重新從 nvm / `go install` /
+- **nats / docker-compose 在 2026-07 移除**（用不到）。安裝方式都研究定案過，要加回來看
+  README 的「版本管理」段與 git log —— 別重新從 `go install` /
   `releases/latest/download` 那些踩過的路開始。
+- **Node 2026-07-27 移除、2026-07-28 因為 `hydrogen/unrelay` 加回來（`TAGS=node`）。**
+  形狀跟移除前一樣（nodejs.org 官方 tarball → `/usr/local/node`，PATH 歸 `profile.yml`），
+  這裡只記那次「加回來」查到的東西：
+  - **`node_version` 明確 pin，刻意不支援 `latest`** —— 這點跟 `go_version` 相反，別為了
+    一致性去改。Go 只有一條線，latest 永遠是「該用的那個」；Node 的**奇數版不進 LTS、
+    只活半年**，追 latest 會定期把機器推到非 LTS 上。現值 `24.18.0`（active LTS，Krypton）。
+  - **不需要版本管理器，理由不是「暫時將就」**：前端專案宣告的幾乎都是**地板**而不是 pin
+    （`unrelay` 沒有 `.nvmrc` / `.node-version` / `engines` / `volta` / `packageManager`，
+    真正的約束是 vite 8 的 `^20.19 || >=22.12`），一個 LTS 就蓋過去。真的硬衝突時隔離該待在
+    **專案層**（`unrelay` 自己就有一個 `node:22-bookworm-slim` 的 devcontainer，podman 已就緒），
+    不是機器層。nvm / fnm 另有硬傷（shell function，非互動 shell 拿不到）；mise 技術上可行
+    但沒有必要 —— 這條跟「不裝通用版本管理器」那條是同一個判斷。
+  - **PATH 順序不是理論問題，是實際發生過的事故。** 2026-07-28 在 `unrelay` 實測：Linux 端
+    沒有 node 時 `command -v npm` 拿到 `/mnt/c/Program Files/nodejs/npm`（Windows npm 11.6.2），
+    於是那包 `node_modules` 整組是 `lightningcss-win32-x64-msvc` /
+    `@rolldown/binding-win32-x64-msvc` / `@tailwindcss/oxide-win32-x64-msvc`，還缺 `.bin/vite`。
+    `profile.yml` 把 `/usr/local/node/bin` 放 `$PATH` **前面**就是在擋這個。
+  - **誤裝過的專案，光裝 Node 不會自動修好，而且失敗是靜默的。** 要先 `rm -rf node_modules`
+    再 `npm ci`。不能只跑 `make init` —— 專案 Makefile 常見的 `node_modules: package-lock.json`
+    時間戳規則，遇到「誤裝出來的 node_modules 比 lock 檔新」會直接跳過 `npm ci`，
+    一路綠燈卻仍在用 Windows 二進位。
+  - **`node.yml` 不掛 `base` / `build-tools`**：tarball 安裝的必經路徑只用到 `get_url` 與
+    tar/xz（`xz-utils` 是 Ubuntu base 的 priority: important）。node-gyp 那類要編原生模組的
+    是**某個 npm 套件**的相依、不是 Node 自己的 —— 真的遇到再點 `TAGS=build-tools`。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：

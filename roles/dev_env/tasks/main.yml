@@ -62,6 +62,12 @@
   ansible.builtin.import_tasks: python.yml
   tags: [python]
 
+# 官方 tarball 裝到 /usr/local/node，沒有版本管理器（理由見 node.yml 檔頭）。
+# 不掛 base / build-tools —— tarball 安裝路徑上用不到。
+- name: Node.js
+  ansible.builtin.import_tasks: node.yml
+  tags: [node]
+
 - name: 容器 runtime（podman）
   ansible.builtin.import_tasks: podman.yml
   tags: [podman]
@@ -74,7 +80,7 @@
 # `make facts` 從唯讀變成會改 ~/.profile。
 - name: ~/.profile 環境設定
   ansible.builtin.import_tasks: profile.yml
-  tags: [profile, claude, go, python, podman]
+  tags: [profile, claude, go, python, node, podman]
 
 # 註：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。

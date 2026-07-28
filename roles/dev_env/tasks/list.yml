@@ -34,6 +34,10 @@
       dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
       desc: uv（自己也管 Python 版本，所以不需要 pyenv）
+    - tag: node
+      dep: false
+      path: /usr/local/node/bin/node
+      desc: Node.js {{ node_version }} LTS + npm（官方 tarball，不需要 nvm）
     - tag: podman
       dep: false
       path: /usr/bin/podman
