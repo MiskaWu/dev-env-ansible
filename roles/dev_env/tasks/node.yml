@@ -71,6 +71,55 @@
         extra_opts: [--strip-components=1]
       when: not ansible_check_mode
 
+# --- symlink 進 /usr/local/bin -------------------------------------------------
+# **`~/.profile` 的 PATH 只有登入 shell 讀得到**，所以行程樹的根不是登入 shell 的情境
+# 完全拿不到 /usr/local/node/bin。2026-07-28 實測
+# `wsl -d dev -e bash -c 'command -v ...'`（非登入非互動）：
+#
+#     node   ** NOT FOUND **
+#     npm    /mnt/c/Program Files/nodejs/npm      ← Windows 的 npm
+#
+# 第二行才是真正的地雷 —— 不是「找不到」而是**靜默用錯一支**，於是在 Linux 專案裡裝出
+# *-win32-x64-msvc 的原生模組（CLAUDE.md 記過這次事故）。這個 symlink 就是在補那個洞。
+#
+# /usr/local/bin 在每一個相關 context 的預設 PATH 裡都有，而且排在 Windows 路徑
+# **前面**（實測：`wsl -e` 第 2 位、systemd system/user manager、bash 編譯內建 fallback、
+# cron 實跑一次確認）。
+#
+# **symlink 不會弄壞 node**：它自己解 realpath，透過 symlink 跑出來的 process.execPath
+# 仍然是 /usr/local/node/bin/node（在只有 symlink 目錄的 `env -i` 環境實測 node -v /
+# npm -v / npx -v / corepack -v 全通）。npm/npx 本身就是指向 ../lib/node_modules/… 的
+# symlink，再套一層一樣解得開；它們的 shebang 是 `#!/usr/bin/env node`，靠的正是同一批
+# symlink 裡的 node。
+#
+# **守備範圍就是這四個固定名字，別誤會**：`npm i -g <pkg>` 的執行檔會落在
+# /usr/local/node/bin（實測 `npm config get prefix` = /usr/local/node），那些**不會**
+# 被 symlink 到，非登入 shell 一樣看不到。所以 profile.yml 那份 PATH 不能拿掉 ——
+# 它管的正是這一類「裝完之後才多出來的東西」，兩者是互補不是重複。
+#
+# 刻意放在上面那個 block **外面**：加這條規則之前就裝好 Node 的機器，版本沒變不會進
+# block，symlink 得靠這裡補。`file: state=link` 天生冪等，重跑不會 changed。
+- name: Check Node binaries are in place
+  ansible.builtin.stat:
+    path: /usr/local/node/bin/node
+  register: _node_installed
+  check_mode: false
+
+# when 是為了 `--check`：乾跑不會真的解壓，來源不存在時 `file: state=link` 會直接報錯
+# （"src file does not exist"）。跳過只是少印一筆 diff，實跑不受影響 —— 跟 profile.yml
+# 檔頭記的是同一類 check mode 落差。
+#
+# 沒有加 force: true 是刻意的：dest 若已經是別人放的**實體檔案**，file 模組會拒絕轉成
+# symlink 並報錯。那是對的行為 —— 我們不該無聲蓋掉不是自己放的東西。
+- name: Symlink Node binaries into /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: "/usr/local/node/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop: [node, npm, npx, corepack]
+  when: _node_installed.stat.exists
+
 # --- /tmp 收尾 ----------------------------------------------------------------
 # 跟 go.yml 同一套理由：/tmp 是 tmpfs（RAM-backed），一份 tarball 約 30MB 就這樣佔著
 # 記憶體，而且每 pin 到一個新版就多留一份。

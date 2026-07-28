@@ -299,6 +299,18 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 `npm ci` 會裝出一整包 Windows 原生模組（`*-win32-x64-msvc`），在 Linux 下完全不能用。
 `profile.yml` 把 `/usr/local/node/bin` 放在 `$PATH` **前面**就是在擋這個。
 
+**但光靠 `~/.profile` 擋不住，因為它只有登入 shell 會讀。** 行程樹的根不是登入 shell 的
+情境（`wsl.exe -e`、systemd unit、cron、Windows 側 spawn 的東西、未來的
+`ssh dev '<cmd>'`）全都讀不到 —— 2026-07-28 實測 `wsl -d dev -e bash -c 'command -v npm'`
+拿到的正是 Windows 那支。所以 `node.yml` / `go.yml` 另外把執行檔 symlink 進
+`/usr/local/bin/`（`node` `npm` `npx` `corepack` / `go` `gofmt`），那個目錄在上述每個
+context 的預設 PATH 裡都有，而且排在 Windows 路徑前面。
+
+兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的
+東西（`npm i -g` 的 bin 在 `/usr/local/node/bin`、`go install` 的在 `~/go/bin`，那些不會
+被 symlink 到）。要驗就實跑 `wsl -d dev -e bash -c 'command -v <cmd>'` —— 用互動 shell
+驗一定是綠的，驗不出東西。
+
 已經誤裝過的專案，**光裝 Node 不會自動修好** —— 要先把舊的整包砍掉：
 
 ```bash
