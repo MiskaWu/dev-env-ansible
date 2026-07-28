@@ -1,0 +1,12 @@
+---
+# unzip —— 不少 release 只出 zip。
+#
+# 這是「日常自己會敲的小工具」，**不是任何東西的相依**。要判斷某個工具該不該升進
+# base.yml（那才是相依層），看 CLAUDE.md 裡 jq（升格）與 ripgrep（駁回）那組對照：
+# 判準是「在某個 installer 的必經路徑的原始碼裡指得出它被呼叫」，不是「好用」。
+- name: Install unzip
+  become: true
+  ansible.builtin.apt:
+    name: unzip
+    update_cache: true
+    cache_valid_time: 3600

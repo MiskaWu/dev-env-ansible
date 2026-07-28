@@ -1,0 +1,11 @@
+---
+# lazygit —— git 的 TUI。走 apt（universe 的版本跟上游同代），刻意不抓 GitHub release
+# tarball：那要查版本、對 checksum、自己管升級，而這裡沒有需要跟到最新的理由。
+#
+# 這是「日常自己會敲的小工具」，**不是任何東西的相依** —— Claude Code 用不到它。
+- name: Install lazygit
+  become: true
+  ansible.builtin.apt:
+    name: lazygit
+    update_cache: true
+    cache_valid_time: 3600

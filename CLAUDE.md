@@ -67,16 +67,21 @@
   `list.yml` 補一行。
   **代價要記著**：沒有「一句話把這台機器收斂回我要的組合」了，所以 `make list` 改成偵測
   機器上實際有什麼（`stat` 那幾個 binary），`profile.yml` 也改成偵測而不是讀開關。
-- **多裝一個 apt 小工具＝在 `tools.yml` 加一個帶自己 tag 的 task**，不要開新的 task 檔。
-  獨立檔案是留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
-  以前 psql/redis 有自己的 `clients.yml` + `install_clients`、lazygit 也差點為了一句
-  `apt install` 開一個檔 + 一個布林 + `main.yml` 一筆 + README 一列——就是要避免那個。
-  （2026-07-28 之前這些是 `dev_env_packages` 一份清單裡的一行。改成一 task 一 tag 是為了
-  能單裝 —— tag 必須在 parse 時就是靜態的，沒辦法從 list 變數生出來。成本從一行變五行，
-  這是 per-tool 選擇的必要代價。）
-  **但編譯工具鏈不進 `tools.yml`**：`build-essential` 不是「你會敲的工具」，是 Go（cgo）與
-  uv（C extension）共用的前置，所以獨立成 `build-tools.yml`、掛在它們的 tag 底下。
-  `tools.yml` 是「日常敲的東西」，別讓它變成什麼都往裡丟的雜物袋。
+- **一個項目一個 task 檔，apt 小工具也不例外（2026-07-28 拆開 `tools.yml`）。** 多裝一個
+  工具就是開一個 `<工具>.yml`，在 `main.yml` 掛 `tags: [tools, <工具>]` —— 兩種叫法都成立：
+  `TAGS=lazygit` 只裝那一個，`TAGS=tools` 是這一類整包。
+  **這條 2026-07-28 當天翻過一次，理由是成本變了、不是喜好變了**：舊規則寫「不要為一句
+  `apt install` 開一個檔」，因為當時的代價是「一個檔 + **一個布林** + `main.yml` 一筆 +
+  README 一列」。布林開關同一天整組移除之後，代價只剩「一個檔 + 一行 import」，就沒有
+  理由讓這幾個跟 `go.yml` / `node.yml` 長得不一樣。
+  （更早的演化：這些原本是 `dev_env_packages` 一份清單裡的一行，改成一 task 一 tag 是為了
+  能單裝 —— tag 必須在 parse 時就是靜態的，沒辦法從 list 變數生出來。）
+  **判準是「這是誰的東西」，不是檔案大小**：
+  - **你自己會敲的** → 自己一個檔（`lazygit.yml`、`unzip.yml`），掛 `tools`。
+  - **別人的相依** → `base.yml`（installer 要的）或 `build-tools.yml`（編譯工具鏈）。
+    `build-essential` 不是「你會敲的工具」，是 Go（cgo）與 uv（C extension）共用的前置，
+    所以它掛在**它們的** tag 底下，不掛 `tools`。
+  - 要把某個工具從「選裝」升進相依層，看下面 jq（升格）與 ripgrep（駁回）那組對照。
 - **反安裝分兩半：role 獨佔的路徑有 `make uninstall`，apt 的一律手動（2026-07-28 加）。**
   分界線是**所有權**，不是難易度。`/usr/local/go`、`/usr/local/node`、
   `~/.local/share/claude`、`~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的
