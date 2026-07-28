@@ -124,7 +124,10 @@
   - **`lineinfile: state=absent` 不認 managed block 的邊界**，它比對整行、block 內外一起刪。
     清舊版殘留的那幾行字串，必須確定在**任何情況下**都不會跟 block 產出的行逐字相同，
     否則會變成「清掉 → blockinfile 補回 → 每次跑都 changed」。`.local/bin` 那行就是這樣
-    才被拆成獨立、`when: _go_bin.stat.exists` 的 task。
+    才被拆成獨立、`when: _go_bin.stat.exists or _node_bin.stat.exists` 的 task ——
+    **條件要涵蓋「所有會往那行 PATH 塞路徑的項目」**，漏掉一個就是白白跳過清理
+    （加 Node 時就補過一次）。只有全部都沒裝時，block 那行才會退化成跟清理目標逐字
+    相同，那時才真的必須跳過。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
