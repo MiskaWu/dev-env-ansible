@@ -11,6 +11,9 @@ MAKEFLAGS += --no-builtin-rules
 # （LOCAL 會變 "1   " 讓 $(filter 1,…) 對不上），故註解一律另起一行。
 INVENTORY ?= inventory/hosts.yml
 PLAYBOOK  ?= site.yml
+# 反安裝走自己的 playbook —— ansible 的 --tags 是 OR 語意，沒辦法用 tag 組合表達
+# 「移除語境下的 go」（詳見 uninstall.yml 檔頭）。
+UNPLAYBOOK ?= uninstall.yml
 # TAGS：要裝什麼就寫在這裡，例 `make install TAGS=claude`、`TAGS=go,python`。
 # 不設就是全部。有哪些可用跑 `make list`——刻意不在這裡列，手抄一份就會漂移。
 TAGS      ?=
@@ -18,6 +21,9 @@ LIMIT     ?=
 # LOCAL=1：對本機 localhost 跑（在 distro 內用就對了）；控制節點模式設 LOCAL=0
 LOCAL     ?= 1
 EXTRA     ?=
+# DATA=1：只給 `make uninstall` 用 —— 連資料（模組快取、build cache、uv 裝的 Python
+# runtime…）一起清，不只拿掉工具本身。預設保留，理由見 defaults/main.yml。
+DATA      ?=
 
 # ---- 內部組裝 --------------------------------------------------------------
 # COMMA：localhost, 裡的逗號會跟 $(if) 的引數分隔逗號相撞，必須用變數繞過。
@@ -27,14 +33,20 @@ _TAGS  := $(if $(TAGS),--tags $(TAGS),)
 _LIMIT := $(if $(LIMIT),--limit $(LIMIT),)
 _ARGS  := $(_CONN) $(_TAGS) $(_LIMIT) $(EXTRA)
 
-# 直接跟 playbook 要真實的 tag 清單（單一事實來源）。濾掉 never —— 它是「不明確指定
-# 就不跑」的機制標記，不是使用者該挑的項目。pipefail 已開，ansible 失敗不會被後面
-# 永遠回 0 的 sed/tr 洗掉（見 CLAUDE.md 那條「別把 exit code 洗掉」）。
-_TAGS_OF_PLAYBOOK = ansible-playbook $(PLAYBOOK) $(_CONN) --list-tags \
+# 直接跟 playbook 要真實的 tag 清單（單一事實來源）。濾掉 never / always —— 兩者都是
+# 機制標記（「不明確指定就不跑」、「一律跑」），不是使用者該挑的項目。pipefail 已開，
+# ansible 失敗不會被後面永遠回 0 的 sed/tr 洗掉（見 CLAUDE.md 那條「別把 exit code 洗掉」）。
+#
+# 寫成 $(call) 是因為現在有兩個 playbook 要問：site.yml（可裝什麼）與 uninstall.yml
+# （可移除什麼）。兩份清單刻意不同 —— apt 的項目只出現在前者。
+_TAGS_OF = ansible-playbook $(1) $(_CONN) --list-tags \
 	| sed -n 's/.*TASK TAGS: \[\(.*\)\]/\1/p' \
-	| tr -d ' ' | tr ',' '\n' | grep -vx never | paste -sd' '
+	| tr -d ' ' | tr ',' '\n' | grep -vxE 'never|always' | paste -sd' '
+_TAGS_OF_PLAYBOOK  = $(call _TAGS_OF,$(PLAYBOOK))
+_TAGS_OF_UNINSTALL = $(call _TAGS_OF,$(UNPLAYBOOK))
 
-.PHONY: help init list check install syntax lint facts _ensure-ansible _check-tags
+.PHONY: help init list check install uninstall syntax lint facts \
+	_ensure-ansible _check-tags _check-uninstall-tags
 
 help: ## 顯示所有可用命令
 	@awk 'BEGIN {FS = ":.*##"; printf "\n使用方式:\n  make \033[36m<target>\033[0m\n"} \
@@ -43,6 +55,9 @@ help: ## 顯示所有可用命令
 	echo
 	echo "要裝什麼用 TAGS=，例 make install TAGS=claude 或 TAGS=go,python。"
 	echo "不確定有什麼可裝？先跑 make list —— 它會列出每一項，並標出這台機器已經有哪些。"
+	echo
+	echo "移除是 make uninstall TAGS=<項目> —— 必須點名，不帶 TAGS 會被拒絕（沒有「全砍」）。"
+	echo "只支援 tarball / installer 裝的那幾項；apt 裝的要手動，指令會告訴你怎麼做。"
 
 ##@ 起手（乾淨機器）
 # bring-up 給的 baseline 只有 git + make。這個 target 把機器準備到「跑得動這個 repo」
@@ -67,6 +82,20 @@ init: _ensure-ansible ## 起手：補上 ansible-core，並印出下一步
 # 相依會自動帶進來（TAGS=python 會拉 base + build-tools + profile），不必自己列。
 install: _ensure-ansible _check-tags ## 裝東西：不帶 TAGS 全裝，或 TAGS=claude / TAGS=go,python
 	ansible-playbook $(PLAYBOOK) $(_ARGS)
+
+##@ 移除
+# **必須點名 TAGS，不帶就拒絕** —— 這是這個 target 的安全機制，也是跟 install 最重要的
+# 不對稱：install 不帶 TAGS 是「全裝」，uninstall 不帶 TAGS 是「拒絕」。這個指令沒有
+# 「全砍」這個意思，也不該有人靠少打幾個字就得到它。
+#
+# 刻意**沒有**對稱的 `uninstall-check`：ansible 的 `--check` 對移除給的是假的安全感
+# （它看不到 apt 的連帶移除），完整理由在 roles/dev_env/tasks/uninstall.yml 檔頭。
+#
+# 只支援這個 role 獨佔擁有的項目（tarball / installer 裝的那幾個）。apt 裝的由下面的
+# guard 擋下並印出手動步驟 —— 那類移除的後果取決於機器現況，必須人看過模擬再決定。
+uninstall: _ensure-ansible _check-uninstall-tags ## 移除：必須帶 TAGS，例 TAGS=go；加 DATA=1 連快取一起清
+	ansible-playbook $(UNPLAYBOOK) $(_CONN) --tags $(TAGS) $(_LIMIT) $(EXTRA) \
+		$(if $(filter 1,$(DATA)),-e dev_env_uninstall_data=true,)
 
 ##@ 先看再動
 # 三個「先看」的指令，回答的是不同問題：
@@ -115,6 +144,61 @@ _check-tags: _ensure-ansible
 		echo "Error: playbook 裡沒有這些 tag：$$bad" >&2
 		echo "可用：$$known" >&2
 		echo "（跑 make list 看每一項是什麼）" >&2
+		exit 1
+	fi
+
+# uninstall 的 guard。比 _check-tags 多做兩件事：
+#
+#   1. **TAGS 空的就拒絕**。這是整個 uninstall 最重要的一道防線 —— 不帶 TAGS 絕不可以
+#      退化成「全砍」，也不可以靜默什麼都不做（那會讓人以為砍過了）。
+#   2. 對「site.yml 裡有、uninstall.yml 裡沒有」的 tag 給**專屬的錯誤訊息**，而不是
+#      籠統的「沒有這個 tag」。那些正是 apt 裝的項目，使用者需要知道的不是「打錯了」，
+#      而是「這類東西為什麼要手動、手動怎麼做」。
+_check-uninstall-tags: _ensure-ansible
+	@if [ -z "$(TAGS)" ]; then
+		echo "Error: make uninstall 必須點名要移除什麼，例：" >&2
+		echo "    make uninstall TAGS=go" >&2
+		echo "    make uninstall TAGS=go,node DATA=1" >&2
+		echo >&2
+		echo "install 不帶 TAGS 是「全裝」，uninstall 不帶 TAGS 一律拒絕 ——" >&2
+		echo "這個指令沒有「全砍」這個意思。" >&2
+		exit 1
+	fi
+	known="$$($(_TAGS_OF_UNINSTALL))"
+	# 從「可裝的」裡拿掉兩個**機制** tag：list 是 make list 的入口、profile 是被別的項目
+	# 帶著跑的收尾。它們不是「可安裝的東西」，所以 `make uninstall TAGS=profile` 應該回
+	# 「沒有這個項目」，而不是掉進下面那段「這是 apt 裝的」——後者會講出假話。
+	# 這兩個名字寫死在這裡是可以接受的：它們是 main.yml 的結構，不是會增減的套件清單。
+	installable="$$($(_TAGS_OF_PLAYBOOK) | tr ' ' '\n' | grep -vxE 'list|profile' | paste -sd' ')"
+	bad=""
+	manual=""
+	for t in $$(echo '$(TAGS)' | tr ',' ' '); do
+		case " $$known " in
+			*" $$t "*) continue ;;
+		esac
+		case " $$installable " in
+			*" $$t "*) manual="$$manual $$t" ;;
+			*) bad="$$bad $$t" ;;
+		esac
+	done
+	if [ -n "$$bad" ]; then
+		echo "Error: 沒有這些項目：$$bad" >&2
+		echo "可以移除的：$$known" >&2
+		echo "（跑 make list 看每一項是什麼）" >&2
+		exit 1
+	fi
+	if [ -n "$$manual" ]; then
+		echo "Error: 這些是 apt 裝的，不提供自動反安裝：$$manual" >&2
+		echo >&2
+		echo "apt 套件是共同持有的 —— 移除的連帶結果取決於這台機器現在還裝了什麼，" >&2
+		echo "同一個指令在兩台機器上結果不同（例：purge tmux 會一起帶走 byobu 與" >&2
+		echo "ubuntu-wsl）。這種決定沒辦法替你做，所以不包成指令。手動兩步：" >&2
+		echo >&2
+		echo "    apt-get -s purge --autoremove <套件名>    # 先看影響範圍，不會動到系統" >&2
+		echo "    sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行" >&2
+		echo >&2
+		echo "套件名看 roles/dev_env/tasks/ 底下對應的檔案（那是唯一的事實來源）。" >&2
+		echo "可以自動移除的：$$known" >&2
 		exit 1
 	fi
 

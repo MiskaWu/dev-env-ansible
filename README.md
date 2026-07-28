@@ -9,6 +9,7 @@ make install TAGS=claude      # 裝 Claude Code（相依自動帶）
 make install TAGS=go,python   # 挑幾項，一次做完
 make install                  # 全裝
 make list                     # 有哪些可裝、這台已經有哪些
+make uninstall TAGS=go        # 移除一項（必須點名，不帶 TAGS 會被拒絕）
 ```
 
 **沒有「無條件裝」的東西 —— 連 Claude 都是一個要點名的項目。** 這個 repo 的定位表現在
@@ -60,12 +61,52 @@ make check   TAGS=podman        # 乾跑預覽同一件事
 這台該有什麼，現在得自己記得裝過哪些 —— 所以 `make list` 改成**偵測機器上實際有什麼**，
 補上這個缺口。
 
+## 反安裝：`make uninstall TAGS=<項目>`
+
+```bash
+make uninstall TAGS=go           # 拿掉 Go，模組快取留著（會報告大小）
+make uninstall TAGS=go DATA=1    # 連 ~/go 與 build cache 一起清
+make uninstall                   # 拒絕執行 —— 這個指令沒有「全砍」這個意思
+```
+
+**必須點名要移除什麼。** 這是跟 `install` 最重要的不對稱：`make install` 不帶 `TAGS`
+是「全裝」，`make uninstall` 不帶 `TAGS` 是**拒絕**。沒有人該靠少打幾個字就把機器清空。
+
+**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node`）。分界線是
+**所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
+`~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
+
+**apt 裝的（`podman` / `lazygit` / `unzip` / `base` / `build-tools`）要手動**，指令會擋
+下來並告訴你怎麼做。理由不是懶：apt 套件是共同持有的，移除的連帶結果**取決於這台機器
+現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu` 與 `ubuntu-wsl` metapackage 一起帶走。
+同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
+
+```bash
+apt-get -s purge --autoremove <套件名>    # 先看影響範圍，這步不會動到系統
+sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行
+```
+
+**工具與資料是兩個決定。** 預設只拿掉工具，快取／模組／已下載的 runtime 留著並報出
+大小，要一起清才加 `DATA=1`。因為那些目錄常混著你自己的東西 —— 最典型是 `~/go`，
+`go install` 裝的二進位（`bin/`）跟模組快取（`pkg/mod`）在同一棵樹底下。
+**`~/.claude` 是例外中的例外**：設定、專案紀錄、hooks、memory 都在那裡，`DATA=1` 也不動。
+
+**沒有對稱的 `uninstall-check`，這是刻意的。** ansible 的 `--check` 對移除給的是**假的
+安全感**：它只會說「這個 task 會 changed」，不會說 purge 某個套件會連帶帶走誰 —— 那個
+資訊只有 `apt-get -s purge --autoremove` 產得出來。乾跑印完一片綠字，你還是得手動模擬
+一次才敢按下去。安全性改由「必須點名」「只碰獨佔路徑」「資料預設保留」三件事提供。
+
+**移除後 `~/.profile` 會自動重生**（`profile.yml` 是偵測式的，看機器上現在有什麼），
+但**這個 repo 沒有記著「這台不該有什麼」** —— 所以下一次不帶 `TAGS` 的 `make install`
+會把它裝回來。這是純命令式模型的必然代價，跟上面「沒有一句話收斂機器」是同一件事。
+
 ## 檔案結構
 
 ```
 dev-env-ansible/
 ├── ansible.cfg
-├── site.yml                    # 頂層 playbook
+├── site.yml                    # 頂層 playbook（安裝）
+├── uninstall.yml               # 反安裝的入口 —— 獨立 playbook，理由見下
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
     ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、firewall driver）
@@ -80,9 +121,17 @@ dev-env-ansible/
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
+        ├── uninstall.yml       # 反安裝：只碰 role 獨佔的路徑   (由 uninstall.yml 進入)
         └── profile.yml         # ~/.profile 單一 managed block
                                 #      (tags: [profile, claude, go, python, podman])
 ```
+
+**反安裝為什麼是獨立 playbook，不是 `site.yml` 裡一個 tag。** 因為 ansible 的 `--tags`
+是 **OR** 語意：`--tags uninstall,go` 會把「掛 uninstall 的 task」與「掛 go 的 task」
+**兩邊都選中**，也就是連安裝 Go 的那段一起跑。tag 之間沒有 AND，所以「移除語境下的
+go」沒辦法用 tag 組合表達。拆成兩個 playbook 之後，`--tags go` 在各自的檔裡都只有一種
+意思，兩邊的 tag 命名空間互不干擾（Makefile 的 guard 會分別跟兩份 playbook 要清單，
+所以 `make uninstall TAGS=podman` 認得出那是「apt 裝的、要手動」而不是「打錯字」）。
 
 **相依關係就寫在 `main.yml` 的 tag 上。** 前兩個是相依層 —— `base.yml` 掛
 `[base, claude, python]`（那兩個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
@@ -198,6 +247,7 @@ make list                    # 忘了有哪些項目 / 這台裝了哪些 ——
 make check   TAGS=podman     # 預覽某一項會動什麼（diff）；LOCAL 預設 1，在 distro 內不用帶
 make install TAGS=podman     # 套用
 make install                 # 或把全部重跑一次（會跟著上游走版，例如 Go latest）
+make uninstall TAGS=node     # 用不到了就拿掉（apt 裝的會擋下來並教你手動怎麼做）
 ```
 
 `list` 與 `check` 回答的是不同問題，兩個都留著：**`list` 是「有哪些東西可裝、這台已經有

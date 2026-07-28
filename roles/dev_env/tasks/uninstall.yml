@@ -1,0 +1,233 @@
+---
+# 反安裝的內容。**只處理「這個 role 獨佔擁有的東西」** —— 也就是官方 tarball / installer
+# 放下去的那幾個目錄。apt 裝的一律不碰，理由見下。
+#
+# ---- 為什麼沒有跟 install 對稱的乾跑（uninstall-check）-----------------------
+# 因為 ansible 的 `--check` 對「移除」給的是**假的安全感**。它只會說「這個 task 會
+# changed」，不會說 `apt purge --autoremove tmux` 會連帶把 byobu 與 ubuntu-wsl 一起拔掉
+# —— 那個資訊只有 `apt-get -s purge --autoremove` 產得出來。乾跑印完一片綠字之後，你還是
+# 得手動模擬一次才敢按下去，那個 target 什麼也沒買到，只是讓人以為自己看過了。
+#
+# 安全性改由三件事提供，每一件都是實質的：
+#
+#   1. **必須點名 TAGS，不帶就拒絕執行**（Makefile 的 `_check-uninstall-tags`）。
+#      這是跟 install 最重要的不對稱：`make install` 不帶 TAGS 是「全裝」，
+#      `make uninstall` 不帶 TAGS 是「拒絕」—— 這個指令沒有「全砍」這個意思，
+#      也不該有人能靠少打幾個字得到它。
+#
+#   2. **只碰 role 獨佔的路徑**（/usr/local/go、/usr/local/node、~/.local/share/claude、
+#      ~/.local/bin/uv…）。這些整包是我們放的，刪掉不牽動任何別的東西 —— 這正是它們
+#      能自動化、而 apt 套件不能的原因。
+#
+#   3. **工具與資料分開**：預設只移除工具本身，快取／模組／已下載的 runtime 留著並報告
+#      大小；要一起清得明確加 `DATA=1`。理由是那些目錄常常裝著你自己的東西
+#      （最典型：`~/go/bin` 底下 `go install` 裝的二進位跟模組快取放在同一棵樹）。
+#
+# ---- 為什麼 apt 的項目（base / build-tools / tools / podman）不在這裡 --------
+# apt 套件是**共同持有**的：移除的連帶結果取決於這台機器現在還裝了什麼，同一份 playbook
+# 在兩台機器上拔同一個套件會得到不同結果（CLAUDE.md 記過 tmux 那個例子 —— purge 它會把
+# byobu 和 ubuntu-wsl metapackage 一起帶走）。這是整個 repo 裡唯一一類「讀 playbook 讀
+# 不出後果」的操作，正確做法必然包含「人看過 `apt-get -s purge --autoremove` 的輸出再
+# 決定」。一個沒辦法替你做決定的動作，不該包成一個看起來會替你做決定的指令。
+#
+# 還有第二個理由：要在這裡模擬就得把套件名再抄一份，而那份抄本一定會漂移 —— list.yml
+# 的檔頭記過同一個教訓（它刻意不列舉 base.yml 那四個套件的名字，因為 jq 升格時抄本當場
+# 就過期了）。這裡連抄都不抄，就沒有這個問題。
+#
+# apt 項目由 Makefile 的 guard 擋下、並印出手動步驟，這個檔完全不碰它們。
+#
+# ---- 加一個新項目時 ----------------------------------------------------------
+# 只有「role 獨佔一個目錄」的項目才適合加進來。加的時候：給它一個跟 install 端同名的
+# tag、移除工具路徑、把資料路徑登記到 `_uninstall_data`（會被 DATA=1 清掉）或
+# `_uninstall_keep`（永遠保留，只報告）。
+
+# 三個累加器。各項目的 block 往裡面登記，最後統一報告／處理 —— 這樣資料的處置邏輯只有
+# 一份，不必在每個項目裡重寫一次。
+- name: 準備累加器
+  ansible.builtin.set_fact:
+    _uninstall_done: []
+    _uninstall_data: []
+    _uninstall_keep: []
+  tags: always
+
+# ---- Go ----------------------------------------------------------------------
+- name: Go
+  tags: [go]
+  block:
+    - name: 移除 Go（/usr/local/go）
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/go
+        state: absent
+
+    - name: Go —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['go'] }}"
+        _uninstall_data: "{{ _uninstall_data + _go_data }}"
+      vars:
+        _go_data:
+          # GOPATH。**預設保留**：bin/ 底下是 `go install` 裝的二進位，那是你自己的東西，
+          # 跟 pkg/mod 的快取放在同一棵樹裡，沒辦法只刪一半又講得清楚。
+          - path: "{{ ansible_facts.env.HOME }}/go"
+            what: GOPATH —— 模組快取（pkg/mod）與 go install 裝的二進位（bin）
+          - path: "{{ ansible_facts.env.HOME }}/.cache/go-build"
+            what: Go 的 build cache（純快取，刪了只是下次編譯慢一點）
+
+# ---- Node --------------------------------------------------------------------
+- name: Node.js
+  tags: [node]
+  block:
+    # npm / npx / corepack 都在這個目錄底下（官方 tarball 就是這樣一包），所以移除它
+    # 等於連 npm 一起收掉 —— 不必另外處理。
+    - name: 移除 Node（/usr/local/node）
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/node
+        state: absent
+
+    - name: Node —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['node'] }}"
+        _uninstall_data: "{{ _uninstall_data + _node_data }}"
+      vars:
+        _node_data:
+          - path: "{{ ansible_facts.env.HOME }}/.npm"
+            what: npm 的下載快取
+
+# ---- Claude Code -------------------------------------------------------------
+- name: Claude Code
+  tags: [claude]
+  block:
+    # 這一段刻意講清楚，因為它是唯一「可能正在被使用」的移除對象。
+    - name: Claude Code —— 移除前說明
+      ansible.builtin.debug:
+        msg: |-
+          正在移除 Claude Code。兩件事先說清楚：
+
+            - 如果你**正在**用 claude 跑這個指令，這一跑不會當場中斷 —— Linux 刪檔只是
+              解除連結，執行中的行程還握著那個 inode。但下次啟動就找不到了。
+            - **~/.claude 不會被碰**（設定、專案紀錄、hooks、memory、history）。那是你的
+              資料不是工具，即使加了 DATA=1 也一樣保留。
+
+    # ~/.local/bin/claude 是 symlink，指向 ~/.local/share/claude/versions/<版本>。
+    # 兩個都要移除：只刪 symlink 會留下幾百 MB 的 versions/ 沒人管，只刪 versions/
+    # 會留下一個指向不存在路徑的 symlink（`command -v claude` 還找得到，一跑就爆）。
+    - name: 移除 Claude Code（binary 與 versions/）
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ansible_facts.env.HOME }}/.local/bin/claude"
+        - "{{ ansible_facts.env.HOME }}/.local/share/claude"
+
+    - name: Claude Code —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['claude'] }}"
+        _uninstall_keep: "{{ _uninstall_keep + _claude_keep }}"
+      vars:
+        _claude_keep:
+          - path: "{{ ansible_facts.env.HOME }}/.claude"
+            what: 設定、專案紀錄、hooks、memory —— 你的資料，DATA=1 也不會動
+
+# ---- Python（uv）-------------------------------------------------------------
+- name: Python（uv）
+  tags: [python]
+  block:
+    # uv 的官方 installer 只放這兩個 binary，沒有別的落地路徑。
+    - name: 移除 uv 與 uvx
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ansible_facts.env.HOME }}/.local/bin/uv"
+        - "{{ ansible_facts.env.HOME }}/.local/bin/uvx"
+
+    - name: uv —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['python'] }}"
+        _uninstall_data: "{{ _uninstall_data + _uv_data }}"
+      vars:
+        _uv_data:
+          # uv 自己也管 Python 版本，所以這裡可能躺著好幾個 standalone build，
+          # 體積比 uv 本身大得多 —— 值得報出來。
+          - path: "{{ ansible_facts.env.HOME }}/.local/share/uv"
+            what: uv 裝的 Python runtime 與 uv tool 安裝的工具
+          - path: "{{ ansible_facts.env.HOME }}/.cache/uv"
+            what: uv 的 wheel / 下載快取
+
+# ---- 資料目錄的統一處置 ------------------------------------------------------
+# 到這裡工具已經移除完畢。剩下的是「資料」：預設只報告，DATA=1 才真的刪。
+- name: 檢查資料目錄還在不在
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _data_probe
+  check_mode: false
+  loop: "{{ _uninstall_data + _uninstall_keep }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: always
+
+# 只量「會留下來的」—— 等一下就要刪的路徑量它沒有意義（~/go 那種幾百 MB 的樹 du 一次
+# 要跑好幾秒）。注意條件不是單純的 `not DATA`：DATA=1 時 _uninstall_keep 那幾個（~/.claude）
+# 仍然會留著，仍然該報大小。failed_when: false 是因為權限問題不該讓整個移除失敗。
+- name: 量會保留的資料目錄有多大
+  ansible.builtin.command:
+    cmd: du -sh {{ item.item.path | quote }}
+  register: _data_size
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - item.stat.exists
+    - not ((dev_env_uninstall_data | bool)
+           and item.item.path in (_uninstall_data | map(attribute='path') | list))
+  loop: "{{ _data_probe.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  tags: always
+
+# `| bool` 不能省：DATA=1 走的是 `-e dev_env_uninstall_data=true`，extra-var 進來是**字串**
+# "true"。`when:` 看得懂字串，但少了 `| bool` 這條 when 會在 `-e ...=false` 時也成立
+# （非空字串一律 truthy）—— CLAUDE.md 記過同一類坑，這裡是它唯一還會出現的地方。
+#
+# _uninstall_keep 刻意不在這個 loop 裡：那些路徑不管 DATA 怎麼給都保留。
+- name: 移除資料目錄（DATA=1）
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _uninstall_data }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: dev_env_uninstall_data | bool
+  tags: always
+
+# 只 loop `_data_size.results` 一份就夠：它是對 `_data_probe.results` 逐項跑出來的，所以
+# 每個元素同時帶著探測結果（item.stat.exists、item.item.path/what）與大小（stdout）。
+#
+# **不要**改成「iterate probe、再用 selectattr 去 size 裡撈對應那筆」—— 被 `when` 跳過的
+# loop 元素**沒有 stdout 這個 key**，`map(attribute='stdout')` 會直接拋錯，而 DATA=1 時
+# 每一筆都是跳過的。單一 loop 沒有這個相關聯問題。
+- name: 移除完成
+  ansible.builtin.debug:
+    msg: |-
+      已移除：{{ _uninstall_done | join('、') if _uninstall_done else '（這次沒有選到任何項目）' }}
+      ~/.profile 已依移除後的機器現況重新產生（PATH / GOTOOLCHAIN / DOCKER_HOST）。
+      新的 shell 才會生效；目前這個 shell 要自己 `. ~/.profile`。
+      {% set rm_paths = _uninstall_data | map(attribute='path') | list %}
+      {% set shown = _data_size.results | selectattr('item.stat.exists') | list %}
+      {% if shown %}
+
+      資料目錄：
+      {% for r in shown %}
+        {{ '已刪除' if (dev_env_uninstall_data | bool) and r.item.item.path in rm_paths else '保留  ' }} {{ (r.stdout | default('? ')).split()[0].rjust(6) }}  {{ r.item.item.path }}
+                {{ r.item.item.what }}
+      {% endfor %}
+      {% if not (dev_env_uninstall_data | bool) and (shown | selectattr('item.item.path', 'in', rm_paths) | list) %}
+
+      要連上面標「保留」而且不是你的資料的那幾個一起清：同一個指令加 DATA=1。
+      {% endif %}
+      {% endif %}
+
+      注意：這個 repo 沒有「這台機器不該有什麼」的紀錄，所以**下一次不帶 TAGS 的
+      `make install` 會把剛移除的東西裝回來**。要重灌單項就 `make install TAGS=<項目>`。
+  tags: always

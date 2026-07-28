@@ -1,0 +1,37 @@
+---
+# `make uninstall TAGS=<項目>` 的入口。
+#
+# ---- 為什麼獨立成一個 playbook，不併進 site.yml ------------------------------
+# 因為 ansible 的 `--tags` 是 **OR** 語意：`--tags uninstall,go` 會把「掛 uninstall 的
+# task」與「掛 go 的 task」**兩邊都選中**，也就是連 site.yml 裡安裝 Go 的那段一起跑。
+# tag 之間沒有 AND，所以「移除語境下的 go」沒辦法用 tag 組合表達出來。
+#
+# 換成獨立 playbook 之後，`--tags go` 在這個檔裡只有一種意思，而且 install 那邊完全
+# 不受影響 —— 兩個入口各自有一份乾淨的 tag 命名空間。
+#
+# 順序固定三段：detect（拿 is_wsl / arch）→ 移除 → 重生 ~/.profile。
+# 最後一段是必要的：profile.yml 是**偵測式**的（stat 機器上有什麼），移除跑完再讓它跑
+# 一次，PATH 與 GOTOOLCHAIN / DOCKER_HOST 就會自動退掉，不必在移除邏輯裡另外處理。
+- name: Uninstall dev environment components
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: 偵測環境（is_wsl / arch）
+      ansible.builtin.import_role:
+        name: dev_env
+        tasks_from: detect.yml
+      tags: always
+
+    - name: 移除
+      ansible.builtin.import_role:
+        name: dev_env
+        tasks_from: uninstall.yml
+
+    # 放最後，理由同 main.yml：.profile 的內容取決於機器上「現在」有什麼。
+    # tags: always —— 不管這次移除的是哪一項都要重生（少了它，`--tags go` 會讓
+    # .profile 留著已經不存在的 /usr/local/go/bin）。
+    - name: ~/.profile 環境設定（依移除後的機器現況重生）
+      ansible.builtin.import_role:
+        name: dev_env
+        tasks_from: profile.yml
+      tags: always

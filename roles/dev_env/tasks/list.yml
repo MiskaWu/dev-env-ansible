@@ -85,6 +85,12 @@
         make install TAGS=go,python   裝多項，一次 ansible run 做完
         make install                  全裝（不帶 TAGS 就是不帶 --tags）
         make check TAGS=podman        乾跑預覽這一項會改什麼
+        make uninstall TAGS=go        移除一項（必須點名，不帶 TAGS 會被拒絕）
 
       相依是自動的：TAGS=python 會把 base 與 build-tools 一起帶進來，任何會影響 PATH
       的項目也都會順便更新 ~/.profile —— 不必自己列。
+
+      移除只支援 tarball / installer 裝的項目（claude / go / python / node）——
+      那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
+      lazygit / unzip / base / build-tools）要手動，`make uninstall TAGS=<那些>`
+      會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。

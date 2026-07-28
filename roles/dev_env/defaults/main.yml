@@ -49,5 +49,20 @@ node_version: "24.18.0"
 # 這裡引用 detect.yml 設的 is_wsl —— Ansible 變數延遲求值，podman.yml 用到時已經存在。
 podman_firewall_driver: "{{ 'iptables' if is_wsl else 'nftables' }}"
 
+# 反安裝時要不要連「資料」一起清（模組快取、build cache、uv 裝的 Python runtime…）。
+# 預設 false —— `make uninstall TAGS=go` 只拿掉工具本身，資料留著並報告大小；要一起清是
+# `make uninstall TAGS=go DATA=1`。
+#
+# 為什麼預設保留：那些目錄常常混著你自己的東西，最典型是 `~/go` —— `go install` 裝的
+# 二進位（bin/）跟模組快取（pkg/mod）在同一棵樹底下，沒辦法只刪一半又講得清楚。
+# 「拿掉工具」與「丟掉資料」是兩個決定，不該由同一個字觸發。
+#
+# 註：`~/.claude` 不受這個開關影響，任何情況下都保留（設定 / 專案紀錄 / memory 是資料，
+# 不是這個 role 裝的東西）。
+#
+# 這是唯一一個從指令列傳進來的布林，所以用到的地方**一律要 `| bool`** —— `-e` 傳進來
+# 是字串 "true"/"false"，兩者在 Jinja 裡都 truthy（見 uninstall.yml 那條註解）。
+dev_env_uninstall_data: false
+
 # 註：SSH key 與 git 身分不在這個 role —— 由 wsl-bootstrap 的 provision.sh 在 bring-up 就
 # 備好（key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層）。設定在 config.ps1。
