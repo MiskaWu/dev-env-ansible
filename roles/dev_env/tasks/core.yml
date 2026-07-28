@@ -1,16 +1,16 @@
 ---
-# 這個檔分兩塊，界線刻意畫清楚：
+# core —— 不裝就沒辦法把這台機器準備起來的東西。`make install` 只跑這個檔加 claude.yml
+# 加 profile.yml，其餘全部要自己點名。
 #
-#   core packages —— 不裝就沒辦法把這台機器準備起來的東西。無條件裝、沒有開關。
-#                    判準是「Claude Code 的 installer 與取得這個 repo 需要什麼」，
-#                    不是「什麼好用」。四個就到頂了，不要往這裡加東西。
-#   dev_env_packages —— 個人選裝，內容在 defaults/main.yml，改清單就好。
+# 判準是「Claude Code 的 installer 與取得這個 repo 需要什麼」，不是「什麼好用」。
+# 四個就到頂了，不要往這裡加東西 —— 要加就拿出「在某個必經路徑的原始碼裡指得出它被
+# 呼叫」等級的證據（jq 就是這樣進來的，ripgrep 是這樣被擋掉的，見 CLAUDE.md）。
 #
 # 已移除 gnupg / lsb-release —— 兩者都只在「加第三方 apt repo」時才需要（gnupg 驗 repo
 # 簽章金鑰、lsb-release 拿 codename 組 sources.list）。現在全走 Ubuntu 內建源 + 官方
 # installer，沒有第三方 repo。apt 驗官方源用的是相依帶進來的 gpgv，不是 gnupg。
 #
-# jq 是 2026-07-27 從 dev_env_packages 升上來的，兩個理由都是實測來的，不是「好用」：
+# jq 是 2026-07-27 從選裝清單升上來的，兩個理由都是實測來的，不是「好用」：
 #
 #  1. installer 真的會用它。抓下 https://claude.ai/install.sh 看：拿 manifest.json 的
 #     checksum 時分兩條路，有 jq 走 `jq -r .platforms[$platform].checksum`，沒有就退回
@@ -20,7 +20,7 @@
 #     誤導的 "Platform linux-x64 not found in manifest"（platform 明明在裡面）。
 #     **checksum 驗證兩條路都會做，所以這不是安全問題**，是「上游改格式就炸、且錯誤訊息
 #     看不懂」的問題 —— 跟 podman 那堆 Recommends 是同一類地雷：少了不會當場報錯。
-#     順序上 main.yml 是 base.yml → claude.yml，所以進 core 就保證 installer 跑到時它已在。
+#     順序上 main.yml 是 core.yml → claude.yml，所以進 core 就保證 installer 跑到時它已在。
 #
 #  2. statusline 這種每次重繪都跑的熱路徑，jq 快一個檔次。同機實測（60 次平均）：
 #     單一 jq 一次抽完 10 個欄位 4.6ms，python3 做同一件事 32.4ms —— 光 interpreter
@@ -37,22 +37,3 @@
       - jq                 # 同上：installer 解 manifest checksum 的首選路徑（見上方註解）
     update_cache: true
     cache_valid_time: 3600
-
-# 一次全丟給 apt（不是 loop 一個個裝）：解相依只算一次，也只更新一次 cache。
-- name: Install selected CLI packages
-  become: true
-  ansible.builtin.apt:
-    name: "{{ dev_env_packages }}"
-    update_cache: true
-    cache_valid_time: 3600
-  when: dev_env_packages | length > 0
-
-# 編譯工具鏈自成一項，不混進上面的清單 —— 它是 Go（cgo）與 uv（C extension）共用的
-# 前置，不是日常會敲的工具。理由與體積取捨寫在 defaults/main.yml 的 install_build_tools。
-- name: Install build toolchain
-  become: true
-  ansible.builtin.apt:
-    name: build-essential
-    update_cache: true
-    cache_valid_time: 3600
-  when: install_build_tools | bool
