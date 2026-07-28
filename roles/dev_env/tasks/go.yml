@@ -45,8 +45,13 @@
       when: not ansible_check_mode
 
 # --- /tmp 收尾 ----------------------------------------------------------------
-# 一份 tarball 64MB，而 `go_version: latest` 每次上游走版就多留一份（WSL 的 /tmp 是磁碟、
-# 不是 tmpfs，重開機也不會自己消失）。
+# 一份 tarball 64MB，而 `go_version: latest` 每次上游走版就多留一份。
+#
+# 2026-07-28 更正：這段原本寫「WSL 的 /tmp 是磁碟、不是 tmpfs，重開機也不會自己消失」，
+# 那是錯的 —— Ubuntu 走 systemd 的 `tmp.mount`，`/tmp` 是 **tmpfs**（實測
+# `findmnt -no FSTYPE,SIZE /tmp` = tmpfs 7.8G），所以 `wsl --shutdown` 之後它就沒了。
+# 但清它的理由反而更強：tmpfs 是 **RAM-backed**，那 64MB 直接佔記憶體（`df -h /tmp`
+# 的用量與 `free` 的 shared 欄對得上），而且同一次開機內每走一版 Go 就多留一份。
 #
 # 刻意放在上面那個 block **外面**：擺在 block 裡只會清掉「這次剛裝的那一份」，於是之前
 # 走版留下的舊 tarball 永遠沒人收 —— 而那才是會累積的那些。放外面等於每次 apply 都做一次
