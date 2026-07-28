@@ -117,7 +117,8 @@ dev-env-ansible/
         ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, python])
         ├── build-tools.yml     # build-essential      (tags: [build-tools, go, python])
         ├── claude.yml          # Claude Code（native installer）      (tags: claude)
-        ├── tools.yml           # CLI 小工具，每個 task 自帶 tag       (tags: tools + 各自)
+        ├── unzip.yml           # unzip                        (tags: [tools, unzip])
+        ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
@@ -138,9 +139,11 @@ go」沒辦法用 tag 組合表達。拆成兩個 playbook 之後，`--tags go` 
 `[build-tools, go, python]`。所以 `--tags python` 會自動把兩者都帶進來。`go.yml` 沒掛
 `base` 是因為它走 ansible 的 `get_url`，不呼叫 `curl` 二進位。
 
-**要多裝一個 apt 小工具，在 `tools.yml` 加一個帶自己 tag 的 task**，不要開新的 task 檔 ——
-獨立檔案是留給「需要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`
-那種）。`build-essential` 也不進 `tools.yml`：它不是你會敲的工具，是別人的前置。
+**一個項目一個 task 檔，apt 小工具也不例外。** 多裝一個工具就是開一個 `<工具>.yml`，
+在 `main.yml` 掛 `tags: [tools, <工具>]` —— 於是 `TAGS=lazygit` 只裝那一個、`TAGS=tools`
+是這一類整包。分類的判準是**這是誰的東西**：你自己會敲的掛 `tools`；別人的相依進
+`base.yml`（installer 要的）或 `build-tools.yml`（編譯工具鏈）。`build-essential` 屬後者
+—— 它不是你會敲的工具，是 Go 與 uv 的前置，所以掛在**它們的** tag 底下。
 
 ## 首次設定
 

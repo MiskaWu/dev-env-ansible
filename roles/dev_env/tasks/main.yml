@@ -48,11 +48,25 @@
   ansible.builtin.import_tasks: claude.yml
   tags: [claude]
 
-# tools.yml 裡每個 task 自帶 tag（`TAGS=lazygit` 只跑一個），這裡的 `tools` 是「整包」
-# 的叫法（`TAGS=tools`）。兩個 tag 會疊加。
-- name: CLI 小工具
-  ansible.builtin.import_tasks: tools.yml
-  tags: [tools]
+# ---- CLI 小工具：一個工具一個檔，各自掛 [tools, <自己>] -----------------------
+# 兩種叫法都成立：`TAGS=lazygit` 只裝那一個，`TAGS=tools` 是「這一類整包」。
+#
+# 2026-07-28 從單一 tools.yml 拆開。原本合在一個檔是為了「不要為一句 apt install 開
+# 一個檔 + 一個布林 + main.yml 一筆」，但**布林開關同一天就整組移除了**，代價只剩下
+# 「一個檔 + 一行 import」—— 那就沒有理由讓這幾個跟 go / node / python 用不同的形狀。
+#
+# 判準仍然不變：這裡放的是「你自己會敲的東西」。**別人的相依不放這裡** —— installer
+# 需要的進 base.yml，編譯工具鏈進 build-tools.yml（`build-essential` 不是你會敲的工具）。
+#
+# 2026-07 移除的：postgresql-client / redis-tools（改用 podman run 跑 client）、
+# ripgrep（Claude 的 native binary 內嵌了 rg，系統這支只有自己在 shell 敲才會用到）。
+- name: unzip
+  ansible.builtin.import_tasks: unzip.yml
+  tags: [tools, unzip]
+
+- name: lazygit
+  ansible.builtin.import_tasks: lazygit.yml
+  tags: [tools, lazygit]
 
 - name: Go
   ansible.builtin.import_tasks: go.yml
