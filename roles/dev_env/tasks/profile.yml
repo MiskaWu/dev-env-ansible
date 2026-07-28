@@ -6,16 +6,37 @@
 # 收成單一 managed block：以前 go/claude/python/podman 四個 task 檔各自 lineinfile 一行，
 # 邏輯散落且 ~/.local/bin 那行被寫了兩次。集中在這裡，PATH 順序也才控制得住。
 #
+# ---- 為什麼是「偵測」而不是「讀開關」-----------------------------------------
+# 布林開關（install_go 等）2026-07-28 全部移除了，這個檔改成**看機器上實際有什麼**。
+# 這反而更對：使用者可能今天 `make install-go`、下週才 `make install-python`，中間沒有
+# 任何地方記著「這台有 Go」。偵測讓兩次都產出正確的 .profile。
+#
+# 順序上安全：main.yml 把 profile.yml 放最後，所以同一次 run 裡 go.yml 已經裝完才輪到
+# 這裡 stat。而 profile 的 tag 掛在 [core, go, python, podman] 上，只要裝了會影響 PATH
+# 的東西就一定會跟著跑（舊設計要自己記得 `TAGS=go,profile`，那個坑消失了）。
+#
+# check mode 的已知落差：`--check` 不會真的裝 Go，所以在還沒有 Go 的機器上乾跑，diff
+# 會顯示成「不含 Go PATH」。那是 check mode 的本質（後面的 task 看不到前面沒真的做的
+# 事），不是 bug，實跑無誤。
+#
+# 另一個好處：stat.exists 是**真正的布林**，不像 `-e install_go=false` 傳進來的字串
+# "false" 那樣在 Jinja `{% if %}` 裡是 truthy —— 整類 `| bool` 陷阱一併消失。
+- name: 偵測 Go 是否已裝（決定 .profile 要不要寫 Go 的 PATH / GOTOOLCHAIN）
+  ansible.builtin.stat:
+    path: /usr/local/go/bin/go
+  register: _go_bin
+  check_mode: false
+
+- name: 偵測 podman 是否已裝（決定 .profile 要不要寫 DOCKER_HOST）
+  ansible.builtin.stat:
+    path: /usr/bin/podman
+  register: _podman_bin
+  check_mode: false
+
 # block 裡的 # 註解會**原封不動寫進使用者的 ~/.profile**，所以那裡只留對讀 .profile
 # 的人有意義的話；講 ansible 寫法的說明放這裡（外面）。例如 Go 那兩段之所以用行內
 # {% raw %}{% if %}{% endraw %} 夾在同一行 export 裡而不是拆成兩行 export：拆開的話
 # Go 路徑會跑到 $HOME/.local/bin 前面，「自己裝的照這個順序排」就守不住了。
-#
-# 開關在 Jinja 裡**一定要加 `| bool`**。`when:` 是 Ansible 自己做布林轉換，看得懂
-# `-e install_go=false` 傳進來的字串 "false"；但 `{% raw %}{% if %}{% endraw %}` 是純
-# Jinja，非空字串一律 truthy —— 少了 `| bool`，`make apply EXTRA='-e install_go=false'`
-# 會「Go 沒裝，但 .profile 照樣寫進 Go 的 PATH 與 GOTOOLCHAIN」。用 group_vars 傳真正的
-# YAML 布林時兩邊才會一致，正因為只有某一種傳法會壞，才更要寫死 `| bool`。
 - name: ~/.profile — dev_env managed block
   ansible.builtin.blockinfile:
     path: "{{ ansible_facts.env.HOME }}/.profile"
@@ -26,14 +47,14 @@
       # PATH 順序有意義：自己裝的排在最前面，才會贏過 WSL 附加到尾端的 Windows 路徑
       # （/mnt/c/...）。沒有這層保證的話，像 npm 這種 Windows 也有的指令會解析到
       # Windows 版，在 WSL 裡裝出 Windows 的原生模組。
-      export PATH="$HOME/.local/bin:{% if install_go | bool %}/usr/local/go/bin:$HOME/go/bin:{% endif %}$PATH"
-      {% if install_go | bool %}
+      export PATH="$HOME/.local/bin:{% if _go_bin.stat.exists %}/usr/local/go/bin:$HOME/go/bin:{% endif %}$PATH"
+      {% if _go_bin.stat.exists %}
       # Go 1.21+ 的內建版本切換：go.mod 要求更新的版本時自動下載對應 toolchain。
       # auto 本來就是預設值，明寫是為了讓「不需要 Go 版本管理器」這件事有據可查，
       # 同時擋掉別處被設成 local 的可能。
       export GOTOOLCHAIN=auto
       {% endif %}
-      {% if container_runtime == 'podman' %}
+      {% if _podman_bin.stat.exists %}
       # 給需要 Docker API 的工具（IDE / testcontainers）用。
       export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
       {% endif %}
@@ -41,8 +62,8 @@
 # 舊版把這些 export 各自散寫在 .profile，改用 managed block 後是殘留（PATH 會有重複
 # 項、DOCKER_HOST 會被舊行覆蓋）。lineinfile 的 state: absent 比對整行，**而且不管那行
 # 在不在 managed block 裡** —— 所以這裡列的字串一旦跟 block 產出的某一行逐字相同，
-# 就會把 block 自己的內容刪掉，下次 blockinfile 再補回來，變成每次 apply 都 changed。
-# 下面這兩條在任何開關組合下都不會跟 block 撞：block 的 Go 路徑放在 $PATH **前面**
+# 就會把 block 自己的內容刪掉，下次 blockinfile 再補回來，變成每次 install 都 changed。
+# 下面這兩條在任何情況下都不會跟 block 撞：block 的 Go 路徑放在 $PATH **前面**
 # （舊版放後面），DOCKER_HOST 則改用了 ${XDG_RUNTIME_DIR:-...} 的寫法。
 - name: ~/.profile — 清掉舊版散寫的 export
   ansible.builtin.lineinfile:
@@ -53,14 +74,14 @@
     - 'export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"'
     - 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
 
-# 這行要另外處理，因為它是唯一會跟 block 撞的：install_go=false 時 block 的 PATH 行
-# 就退化成一模一樣的 `export PATH="$HOME/.local/bin:$PATH"`。install_go=true 時 block
-# 那行夾著 Go 路徑、文字不同，清起來才安全。
+# 這行要另外處理，因為它是唯一會跟 block 撞的：沒有 Go 的機器上，block 的 PATH 行就
+# 退化成一模一樣的 `export PATH="$HOME/.local/bin:$PATH"`。有 Go 時 block 那行夾著
+# Go 路徑、文字不同，清起來才安全。
 # 跳過的代價只是 .profile 裡多一行重複的 .local/bin（Ubuntu 內建的 .profile 本來就
-# 也加了一次），PATH 語意不受影響 —— 比每次 apply 都 changed 好。
+# 也加了一次），PATH 語意不受影響 —— 比每次 install 都 changed 好。
 - name: ~/.profile — 清掉舊版的 .local/bin export（僅在不會誤刪 block 內容時）
   ansible.builtin.lineinfile:
     path: "{{ ansible_facts.env.HOME }}/.profile"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: absent
-  when: install_go | bool
+  when: _go_bin.stat.exists

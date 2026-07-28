@@ -1,63 +1,27 @@
 ---
-# 這些是預設值，可在 inventory / group_vars / host_vars 覆蓋。
+# 這裡只剩「**怎麼裝**」的參數，沒有「**裝不裝**」的開關 —— 後者 2026-07-28 整組移除了
+# （install_go / install_python / install_build_tools / container_runtime /
+# dev_env_packages）。要裝什麼由 tag 決定，入口是 `make install-<tag>`。
 #
-# 分層原則：這個 repo 是「以 Claude + Ansible 為基準的環境準備工具」，所以**核心只有
-# Claude Code 與讓它跑起來的最低相依**（base.yml 的 core packages），那部分無條件裝、
-# 沒有開關。**其餘全部是個人選裝** —— 語言 toolchain、容器 runtime、順手的 CLI 工具
-# 都一樣，換一台機器就換一組值，不該有誰有「寫死必裝」的特權。
-
-# ---- 個人選裝：CLI 工具 -----------------------------------------------------
-# 「日常自己會敲的小工具」放這個清單：加一個工具＝加一行，不需要新的 task 檔
-# （為了一句 apt 開一個 task 檔 + 一個布林 + main.yml 一筆，就是這條要避免的）。
-# 兩個例外不放這裡：要版本解析 / 抓 tarball / 跑官方 installer 的（獨立 task，見下），
-# 以及編譯工具鏈（不是「敲的工具」而是別人的前置，見 install_build_tools）。
-# 設成 [] 就只剩 core packages。
-dev_env_packages:
-  - unzip                  # 不少 release 只出 zip
-  - lazygit                # git 的 TUI；universe 的版本跟上游同代
-
-# 這個 role 只裝不卸：從上面的清單刪掉只代表「以後不裝」，已經裝好的不會被動到
-# （apt 的 state: present 只保證「有」）。要讓某個套件真的從機器上消失是手動的事
-# ——刻意如此，卸載是破壞性動作，不該每次 apply 都自動跑一遍。
-# 2026-07 移除的：postgresql-client / redis-tools（改用 podman run 跑 client）。
-# 2026-07-27 **升格**（不是移除）：jq 搬進 base.yml 的 core packages —— 它不只是「順手的
-# 小工具」，Claude Code 官方 installer 解 manifest checksum 的首選路徑就是它，理由與實測
-# 數字寫在 base.yml 的註解。**所以設 dev_env_packages: [] 之後 jq 仍然會裝**。
-# 2026-07-27 移除：ripgrep —— 同一輪調查的另一半結論。它一度看起來跟 jq 同級（是 Claude
-# Code 會 `command -v` 找的四個工具之一），但實測證明 Claude 不需要系統這支：native
-# binary 內嵌了 rg。證據與實驗方法在 CLAUDE.md。剩下的理由只有「自己在 shell 敲 rg」，
-# 而使用者用不太到 —— 所以不裝。要它回來就在這裡加一行。
-
-# ---- 個人選裝：toolchain ----------------------------------------------------
-# 這幾個不是一句 apt 就完事（要查版本 / 抓 tarball / 跑官方 installer，或屬於別人的
-# 編譯前置），所以各自有開關。關掉就整段跳過（見 tasks/main.yml）。
-
-# 編譯工具鏈（gcc / g++ / make / libc6-dev）。**刻意不放在 dev_env_packages 裡** ——
-# 它不是「你會敲的工具」，而是下面兩個 toolchain 共用的前置：Go 碰到 cgo（最常見是
-# mattn/go-sqlite3）、uv 遇到沒有預編譯 wheel 而要現場編 C extension 時都靠它。
-# 體積是這份設定裡最大的單項（連相依約 260MB / 43 個套件，跟 Go 的 269MB 同級），
-# 但缺它的失敗訊息很難認（`exec: gcc: not found`、`error: command 'cc' failed`），
-# 而且總在你正在忙別的事情時才炸。所以只要有人要用它，就預設裝。
+# 為什麼拿掉：本來同時有兩套選擇機制 —— 布林開關（宣告式：「這台機器的定義包含 Go」）
+# 與 tag（命令式：「這次只跑這段」）。這個 repo 的定位是「協助把 Claude 開發環境準備
+# 起來」，其他工具都是**用到時再決定裝哪一個**，那就是純命令式，宣告式那層是多餘的。
+# 一起消失的坑：
+#   - 相依關係被迫寫成布林運算式（install_build_tools = install_go or install_python）
+#   - `-e install_go=false` 傳進來是字串 "false"，`when:` 看得懂但 Jinja `{% if %}`
+#     一律 truthy，少寫 `| bool` 就會裝出「Go 沒裝但 PATH 有 Go」
+#   - tag 與開關不同步（`TAGS=go` 不帶 profile）
 #
-# 預設值跟著消費者走，而不是寫死 true：既然它存在的理由就是 Go 與 uv，那 Go 與 uv 都關掉
-# 時還硬裝 260MB 的編譯器就沒有道理。仍然是個獨立開關，兩個方向都能明確覆蓋 ——
-# `-e install_build_tools=true` 可以在沒有 Go / uv 的機器上單獨要編譯器（手動編東西是
-# 正當用途），`false` 則可以在有 Go 的機器上拒絕它。
-install_build_tools: "{{ install_go | bool or install_python | bool }}"
+# 代價（明確記著）：**沒有「一句話把這台機器收斂回我要的組合」了**。以前讀 group_vars
+# 就知道這台該有什麼；現在得自己記得裝過哪些，或用 `make install-all` 暴力全裝。
+# `make list` 會偵測機器上實際有什麼來補這個缺口。
 
-# Go：「每個專案不同版本」不需要版本管理器 —— Go 1.21+ 預設 GOTOOLCHAIN=auto，go.mod
+# Go 的目標版本。'latest' 表示「每次 install 都查 go.dev」，會跟著上游走版；要凍住就
+# pin 成 '1.26.5' 這種。
+#
+# 註：「每個專案不同版本」不需要版本管理器 —— Go 1.21+ 預設 GOTOOLCHAIN=auto，go.mod
 # 要求更新的版本時 go 指令會自動下載並改用對應 toolchain。這裡只裝一個 bootstrap Go。
-# 注意 latest 表示「每次 apply 都查 go.dev」，會跟著上游走版。要凍住就 pin 版本。
-install_go: true
-go_version: latest                 # 'latest' 查 go.dev，或 pin 如 '1.26.5'
-
-# uv 不只是套件管理器，它自己也管 Python 版本（uv python install、讀 .python-version），
-# 所以不需要另外裝 pyenv 之類的東西。
-install_python: true
-
-# 容器 runtime。設成 'none'（或任何非 podman 的值）就整個跳過 podman.yml，
-# profile.yml 的 DOCKER_HOST 也會一起不寫。目前只實作 podman 路徑。
-container_runtime: podman
+go_version: latest
 
 # netavark 的 firewall driver —— **一律明寫，不吃發行版預設**。
 #
@@ -67,8 +31,8 @@ container_runtime: podman
 # （`netavark version` 會直接印 `default_fw_driver`），Debian changelog 也兩次寫明
 # 「Default to nftables, again」。依賴這種東西 = 換台機器行為就變。
 #
-# WSL2 上 nftables driver 會壞（自建 bridge network 的容器全部卡在 Created），故走
-# iptables；其他 host 用 nftables（發行版的方向，批次下規則較快，也不必裝 iptables）。
+# WSL2 上 nftables driver 會壞（WSL kernel 沒編 CONFIG_NFT_FIB_IPV6，詳見 CLAUDE.md），
+# 故走 iptables；其他 host 用 nftables（發行版的方向，批次下規則較快，也不必裝 iptables）。
 # 可用值：iptables / nftables / firewalld / none，或 '' 表示「完全不管，用發行版預設」。
 # 這裡引用 detect.yml 設的 is_wsl —— Ansible 變數延遲求值，podman.yml 用到時已經存在。
 podman_firewall_driver: "{{ 'iptables' if is_wsl else 'nftables' }}"

@@ -1,51 +1,77 @@
 ---
-# 順序即分層：core（無條件）→ 個人選裝 → profile 收尾。
-# 每個「個人選裝」的 import 都有 when，沒有例外 —— 一眼看得出誰是核心、誰是選的。
+# 「這次要裝什麼」由 **tag** 決定，不再有 install_* 布林開關（2026-07-28 整組移除）。
+# 使用者端的入口是 Makefile 的 `make install-<tag>`，見那裡的 install-% pattern rule。
+#
+# ---- 相依關係用 tag 表達 -----------------------------------------------------
+# 一個 task 檔要成為某個目標的前置，就把那個目標的 tag 也掛上去。build-tools.yml 掛
+# `[build-tools, go, python]`，於是 `--tags python` 會自動把編譯工具鏈帶進來。
+# 實測（--list-tasks）確認過這個行為：
+#
+#     $ ansible-playbook … --tags python --list-tasks
+#     BUILD build-essential   TAGS: [build-tools, go, python]   ← 自動帶進來
+#     PY uv                   TAGS: [python]
+#
+# 比舊的 `install_build_tools: "{{ install_go or install_python }}"` 好在：將來多一個
+# 需要編譯器的東西，只要在它的 import 多掛一個 tag，不必回頭改那條布林運算式；也不會
+# 再有 `-e install_go=false` 傳字串 "false" 進 Jinja 被當成 truthy 的那類坑。
+#
+# ---- 加東西的規矩 ------------------------------------------------------------
+# 新增一個 import 時：(1) 給它自己的 tag；(2) 如果它會影響 PATH / 環境變數，把它的 tag
+# 也加到最下面 profile.yml 那行；(3) 回 list.yml 補一行說明。
 
-# ---- core：這個 repo 的存在理由 ---------------------------------------------
 - name: 偵測環境（is_wsl / arch）
   ansible.builtin.import_tasks: detect.yml
   tags: always
 
-# 只給 `make list` 用，什麼都不改。`never` 讓它不會被一般的 apply / check 掃到，
-# 唯一的進入方式是明確 `--tags list`。放在 detect 之後是因為它要印
-# podman_firewall_driver，而那個預設值引用 detect 設的 is_wsl。
+# 只給 `make list` 用，什麼都不改。`never` 讓它不會被一般的 install 掃到，唯一的進入
+# 方式是明確 `--tags list`。放在 detect 之後是因為它要印 podman_firewall_driver，
+# 而那個預設值引用 detect 設的 is_wsl。
 - name: 可安裝項目一覽（唯讀）
   ansible.builtin.import_tasks: list.yml
   tags: [list, never]
 
-- name: 基礎套件（core + 選裝的 CLI 工具）
-  ansible.builtin.import_tasks: base.yml
-  tags: [base]
+# ---- core：這個 repo 的存在理由，`make install`（不帶後綴）就只裝這些 -----------
+- name: core 套件（Claude installer 與這個 repo 的最低相依）
+  ansible.builtin.import_tasks: core.yml
+  tags: [core]
 
 - name: Claude Code
   ansible.builtin.import_tasks: claude.yml
-  tags: [claude]
+  tags: [core, claude]
 
-# ---- 個人選裝：toolchain ----------------------------------------------------
-- name: 容器 runtime（podman）
-  ansible.builtin.import_tasks: podman.yml
-  when: container_runtime == 'podman'
-  tags: [podman]
+# ---- 選裝：用到時再點名 -------------------------------------------------------
+# tools.yml 裡每個 task 自帶 tag（`make install-lazygit` 只跑一個），這裡的 `tools`
+# 是「整包」的叫法（`make install-tools`）。兩個 tag 會疊加。
+- name: CLI 小工具
+  ansible.builtin.import_tasks: tools.yml
+  tags: [tools]
+
+# 掛在 go / python 底下 = 宣告「它們需要編譯器」。也可以單獨 `make install-build-tools`。
+- name: 編譯工具鏈（Go cgo / uv C extension 的前置）
+  ansible.builtin.import_tasks: build-tools.yml
+  tags: [build-tools, go, python]
 
 - name: Go
   ansible.builtin.import_tasks: go.yml
-  when: install_go | bool
   tags: [go]
 
 - name: Python（uv）
   ansible.builtin.import_tasks: python.yml
-  when: install_python | bool
   tags: [python]
 
-# 註：psql / redis-cli 以前是獨立的 clients.yml + install_clients 開關，現在併進
-# defaults 的 dev_env_packages —— 它們本來就只是 apt 一句話，不值得一個 task 檔。
+- name: 容器 runtime（podman）
+  ansible.builtin.import_tasks: podman.yml
+  tags: [podman]
 
 # ---- 收尾 -------------------------------------------------------------------
-# 放最後：~/.profile 的內容取決於上面裝了什麼（PATH 項目、DOCKER_HOST）。
+# 放最後：~/.profile 的內容取決於機器上實際有什麼（PATH 項目、DOCKER_HOST）。
+#
+# **掛在所有會影響環境變數的 tag 底下**，所以 `make install-go` 之後 .profile 一定是對的
+# —— 舊設計「單跑一個 tag 不會帶到 profile，記得寫 TAGS=go,profile」那個陷阱就此消失。
+# 刻意**不用** always：那會讓 `make facts` 從唯讀變成會改 ~/.profile。
 - name: ~/.profile 環境設定
   ansible.builtin.import_tasks: profile.yml
-  tags: [profile]
+  tags: [profile, core, go, python, podman]
 
-# 注意：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
+# 註：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。
