@@ -130,6 +130,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · claude       Claude Code —— 這個 repo 的存在理由
   · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
   · python       uv（自己也管 Python 版本，所以不需要 pyenv）
+  · node         Node.js 24.18.0 LTS + npm（官方 tarball，不需要 nvm）
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
   · lazygit      lazygit（git 的 TUI）
   · unzip        unzip（不少 release 只出 zip）
@@ -140,7 +141,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    always base build-tools claude go lazygit list podman profile python tools unzip
+    always base build-tools claude go lazygit list node podman profile python tools unzip
 ```
 
 **4. 裝。**
@@ -214,21 +215,47 @@ session 一來 socket 自動起、`DOCKER_HOST` 指得到的東西就活了。�
 
 ## 版本管理：為什麼沒有 mise / nvm / pyenv
 
-開發環境需要「每個專案用不同的語言版本」，但這個 role **刻意不裝通用版本管理器**——
-因為現在裝的兩個語言都已經自己解決了：
+開發環境需要「每個專案用不同的語言版本」，但這個 role **刻意不裝通用版本管理器**：
 
 | | 怎麼切版本 | 這個 role 做什麼 |
 |---|---|---|
 | **Go** | 語言內建。Go 1.21+ 預設 `GOTOOLCHAIN=auto`，`go.mod` 要求更新的版本時 `go` 指令自動下載並改用對應 toolchain | 只裝一個 bootstrap Go |
 | **Python** | `uv` 自己管：`uv python install`、讀 `.python-version`、`uv run` 會自動抓缺的版本（預編譯 standalone build，不用現場編譯） | 裝 uv |
+| **Node** | 不切。裝一個 LTS，版本 pin 在 `node_version` | 官方 tarball → `/usr/local/node` |
 
-**Node 目前完全不裝**（用不到）。將來要用時，它是唯一需要外部工具才能多版本的：屆時
-`mise` 是最合適的選項（`volta` 已宣告 unmaintained 並自己指向 mise，`fnm` 必須靠 shell
-hook、非互動 shell 拿不到）。**不要用 nvm** —— 它是 shell function 且只寫 `~/.bashrc`，
-`wsl -d dev -e node` 這種非互動情境永遠拿不到；apt 那條路也不通，Ubuntu 的 `nodejs` 套件
-不含 npm，而 apt 的 `npm` 停在 9.2.0 還會拖進約 70 個 `node-*` 套件。最省事的做法是照
-`go.yml` 的形狀裝 nodejs.org 官方 tarball 到 `/usr/local/node`（真實路徑，附帶版本相符
-的 npm 與 corepack）。
+Node 是三者中唯一沒有內建解法的，但**它也不需要版本管理器**，因為前端專案宣告的幾乎都是
+**地板**而不是 pin（例：vite 8 要 `^20.19 || >=22.12`）—— 一個 active LTS 就蓋過去了。
+真的出現硬衝突（A 要 20、B 要 26）時，隔離該待在**專案層**（那個專案自己的 devcontainer，
+podman 已經裝好了），不是機器層。為了一個還不存在的衝突先在機器上疊一層抽象，代價比收益大。
+
+**特別不要用 nvm** —— 它是 shell function 且 `install.sh` 在 bash 下只寫 `~/.bashrc`，而
+Ubuntu 的 `.bashrc` 開頭對非互動 shell 直接 `return`，所以 `wsl -d dev -e node`、cron、
+IDE、ansible 全都拿不到 node（這個 repo 2026-07 之前就是這樣）。`fnm` 同樣靠 shell hook。
+`mise` 有 shims 那條真實路徑所以技術上可行，`volta` 則已宣告 unmaintained 並自己指向 mise。
+apt 那條路也不通：Ubuntu 的 `nodejs` 套件不含 npm，而 apt 的 `npm` 停在 9.2.0 還會拖進
+約 70 個 `node-*` 套件。官方 tarball 附帶版本相符的 npm 與 corepack，是真實路徑的 binary。
+
+**要換 Node 版本就改 `defaults/main.yml` 的 `node_version`，然後 `make install TAGS=node`。**
+`node_version` 刻意**不支援 `latest`**（跟 `go_version` 相反）：Node 的奇數版不進 LTS、
+只活半年，追 latest 會定期把機器推到非 LTS 上。
+
+### WSL 特有：PATH 順序才是 Node 真正的地雷
+
+WSL 預設把 Windows PATH 接進來，且 `/mnt/c` 底下的檔案全被當成可執行 —— 所以 Linux 端沒裝
+Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版**），在 WSL 裡跑
+`npm ci` 會裝出一整包 Windows 原生模組（`*-win32-x64-msvc`），在 Linux 下完全不能用。
+`profile.yml` 把 `/usr/local/node/bin` 放在 `$PATH` **前面**就是在擋這個。
+
+已經誤裝過的專案，**光裝 Node 不會自動修好** —— 要先把舊的整包砍掉：
+
+```bash
+cd <專案>
+rm -rf node_modules && npm ci
+```
+
+`rm -rf` 這步不能省：不少專案的 Makefile 用 `node_modules: package-lock.json` 這種時間戳
+規則判斷要不要重裝，而誤裝出來的 `node_modules` 比 lock 檔**新**，`make init` 會直接跳過
+`npm ci`、靜默沿用那堆 Windows 二進位。
 
 ## 設定
 

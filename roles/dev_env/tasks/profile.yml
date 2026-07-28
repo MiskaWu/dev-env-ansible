@@ -27,6 +27,12 @@
   register: _go_bin
   check_mode: false
 
+- name: 偵測 Node 是否已裝（決定 .profile 要不要寫 Node 的 PATH）
+  ansible.builtin.stat:
+    path: /usr/local/node/bin/node
+  register: _node_bin
+  check_mode: false
+
 - name: 偵測 podman 是否已裝（決定 .profile 要不要寫 DOCKER_HOST）
   ansible.builtin.stat:
     path: /usr/bin/podman
@@ -46,8 +52,9 @@
     block: |
       # PATH 順序有意義：自己裝的排在最前面，才會贏過 WSL 附加到尾端的 Windows 路徑
       # （/mnt/c/...）。沒有這層保證的話，像 npm 這種 Windows 也有的指令會解析到
-      # Windows 版，在 WSL 裡裝出 Windows 的原生模組。
-      export PATH="$HOME/.local/bin:{% if _go_bin.stat.exists %}/usr/local/go/bin:$HOME/go/bin:{% endif %}$PATH"
+      # Windows 版，在 WSL 裡裝出 Windows 的原生模組 —— 這不是假想，2026-07-28 在
+      # 一個前端專案上實際發生過（node_modules 整包變成 *-win32-x64-msvc）。
+      export PATH="$HOME/.local/bin:{% if _go_bin.stat.exists %}/usr/local/go/bin:$HOME/go/bin:{% endif %}{% if _node_bin.stat.exists %}/usr/local/node/bin:{% endif %}$PATH"
       {% if _go_bin.stat.exists %}
       # Go 1.21+ 的內建版本切換：go.mod 要求更新的版本時自動下載對應 toolchain。
       # auto 本來就是預設值，明寫是為了讓「不需要 Go 版本管理器」這件事有據可查，
@@ -74,9 +81,9 @@
     - 'export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"'
     - 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
 
-# 這行要另外處理，因為它是唯一會跟 block 撞的：沒有 Go 的機器上，block 的 PATH 行就
-# 退化成一模一樣的 `export PATH="$HOME/.local/bin:$PATH"`。有 Go 時 block 那行夾著
-# Go 路徑、文字不同，清起來才安全。
+# 這行要另外處理，因為它是唯一會跟 block 撞的：Go 與 Node 都沒有的機器上，block 的
+# PATH 行就退化成一模一樣的 `export PATH="$HOME/.local/bin:$PATH"`。只要其中一個在，
+# block 那行就夾著別的路徑、文字不同，清起來才安全。
 # 跳過的代價只是 .profile 裡多一行重複的 .local/bin（Ubuntu 內建的 .profile 本來就
 # 也加了一次），PATH 語意不受影響 —— 比每次 install 都 changed 好。
 - name: ~/.profile — 清掉舊版的 .local/bin export（僅在不會誤刪 block 內容時）
@@ -84,4 +91,4 @@
     path: "{{ ansible_facts.env.HOME }}/.profile"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: absent
-  when: _go_bin.stat.exists
+  when: _go_bin.stat.exists or _node_bin.stat.exists

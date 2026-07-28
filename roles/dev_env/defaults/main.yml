@@ -23,6 +23,18 @@
 # 要求更新的版本時 go 指令會自動下載並改用對應 toolchain。這裡只裝一個 bootstrap Go。
 go_version: latest
 
+# Node 的目標版本。**明確 pin，刻意不支援 'latest'** —— 這點跟 go_version 相反，理由是
+# 兩者的上游模型不同：Go 只有一條線，latest 永遠是「該用的那個」；Node 是奇數版
+# （25 / 27…）不進 LTS、只活半年，追 latest 會定期把機器推到非 LTS 上。
+#
+# 24.18.0 = active LTS（Krypton）。要換版就改這裡，然後 `make install TAGS=node`。
+#
+# 註：「每個專案不同版本」在這裡不需要版本管理器 —— 前端專案宣告的幾乎都是**地板**
+# （例：vite 8 要 ^20.19 || >=22.12），一個 LTS 就蓋過去了。真的出現硬衝突時，隔離
+# 該待在專案層（那個專案自己的 devcontainer），不是機器層。nvm / fnm 另外還有硬傷：
+# 它們是 shell function，非互動 shell 拿不到 node，詳見 node.yml 檔頭。
+node_version: "24.18.0"
+
 # netavark 的 firewall driver —— **一律明寫，不吃發行版預設**。
 #
 # 為什麼不吃預設：netavark 的預設是「編譯期」決定的（上游 src/firewall/mod.rs 用
