@@ -372,13 +372,69 @@ mirrored 開著時測的，功勞被錯算給 NAT。）關掉 mirrored 重測（
 `OOMScoreAdjust=100`，規格要求 0 時非特權調不下來 → `oom_score_adj: Permission denied`。
 `podman run` 不受影響。解法：`user@.service` 加 `OOMScoreAdjust=0` drop-in。
 
-**WSL 的 `/` 是 private mount propagation → 用 systemd unit 設成 rshared。** rootless
-podman 會警告 `"/" is not a shared mount ... missing mounts with rootless containers`，
-且容器內 mount 傳播可能不正確（**k3s 這種大量 mount 的負載特別會踩到**）。正常 systemd
-開機會把 `/` 設 shared，WSL 沒做（實測 `findmnt -no PROPAGATION /` = `private`）。
-`podman.yml` 裝一個開機早期的 oneshot unit（`rshared-root.service`，`is_wsl` gate，
-`Before=sysinit.target`）跑 `mount --make-rshared /`。手動 `mount --make-rshared /` 不持久
-（`wsl --shutdown` 就沒了），必須走 unit 才會每次開機生效。
+**WSL 的 `/` 是 private mount propagation → 用 systemd unit 設成 rshared。**
+（2026-07-28 大幅查證並修正；舊版這段的說法有兩處是錯的，見下。）
+
+**根因：systemd 刻意跳過那一步，因為它認定自己在容器裡。** 上游
+[`src/shared/mount-setup.c`](https://github.com/systemd/systemd/blob/main/src/shared/mount-setup.c)：
+
+```c
+if (detect_container() <= 0 && !leave_propagation)
+    if (mount(NULL, "/", NULL, MS_REC|MS_SHARED, NULL) < 0)
+        log_warning_errno(errno, "Failed to set up the root directory for shared mount propagation: %m");
+```
+
+註解原文：「kernel 預設是 private，但我們認為預設 shared 更合理，這樣 nspawn 和容器工具
+才能開箱即用。」而本機 `systemd-detect-virt` 回的是 **`wsl`**（PID 1 確實是 systemd）→
+**systemd 主動跳過這一行**；WSL 自己的 `/init` 也沒接手。兩邊都以為不該由自己做。
+
+**不是「WSL 想隱藏 Windows 掛載層」——這個推測已用實驗排除。** ① 它擋不住任何東西：
+`-v /mnt/c:/x` 直接讀到 `$Recycle.Bin`、`PerfLogs`。② WSL **自己**把 `/mnt/wsl`、
+`/mnt/wslg` 設成 shared，要隔離就不會這樣做；`/mnt/c`、`/mnt/d` 是 private 只是**沒人
+去設**的 kernel 預設。③ [microsoft/WSL#7477](https://github.com/microsoft/WSL/issues/7477)
+要求改成預設 shared，已關閉且**沒有給出任何安全理由**。
+
+**shared 才是 Linux 常態，這不是給 WSL 加 hack。** 一般 systemd 機器開機後 `/` 就是
+shared；Docker 上游也把自己 unit 裡的 `MountFlags=slave` 拿掉
+（[moby#22806](https://github.com/moby/moby/pull/22806)），Fedora/RHEL 更早就完全移除、
+讓 daemon 直接跑在 host mount namespace。設 rshared 是把 WSL 漏掉的一步補回標準狀態。
+
+**失敗形狀（實測，跟舊說法不同）**：
+
+- **podman 5.7 已經不印 `"/" is not a shared mount` 警告了。** 舊版會印（本條原本就是照
+  那句寫的），現在 `podman run` 是零輸出 —— **線索消失，所以更難查**。
+- 真正的機制：rootless podman 有一個**長駐的 pause process** 持有 mount namespace
+  （`/run/user/<uid>/libpod/tmp/pause.pid`）。容器看到的掛載表 = **那個 namespace 建立
+  時的快照** ＋ 之後傳播進來的。`/` private ⇒ 第二項是零。
+- 決定性對照（同一個目錄、同一條 `podman run`、`/` 都是 private，只差掛載時間點）：
+
+  | tmpfs 掛載時機 | 容器內讀得到嗎 |
+  |---|---|
+  | pause process 建立**之前** | ✅ 讀得到 |
+  | pause process 建立**之後** | ❌ `No such file or directory`（目錄在但是空的） |
+
+- **判準是「時間點」，不是「有沒有巢狀 mount」**（本條原本寫成後者，那是錯的）：
+  `-v /mnt:/x` 底下 `c`/`d`/`wsl`/`wslg` 全部正常，因為它們都是開機時就掛好的；普通檔案
+  與普通巢狀目錄一律正常。自我檢查用 **`findmnt -R <要掛的路徑>`**，沒有輸出就代表那底下
+  沒有掛載點、完全不受影響。
+- 真正會踩到的場景只有一種：**podman 用過之後，才在 host 新掛東西**（插 USB、掛網路
+  磁碟、kubelet 掛 PV）然後想掛進容器。k3s / CSI 是最常見的上游回報
+  （`path /var/lib/kubelet is mounted on / but it is not a shared mount`）。
+
+**壞處評估（查過，對本機不成立）**：shared 的已知代價是「容器建的 mount 洩漏到 host
+且不被清掉、容器重啟還會重複累積」與隨之而來的 `device or resource busy`
+（[moby#36179](https://github.com/moby/moby/issues/36179)）。但那**只在明確使用
+`:rshared` / `bind-propagation=rshared` 時才發生** —— podman `-v` 的預設是 `rprivate`
+（實測容器內 mountinfo 第 7 欄是 `-`），而 busy 那一類特別吃 devicemapper，本機是
+overlay。要監控就看掛載表筆數（`wc -l < /proc/self/mountinfo`，基準 41）。
+
+**實作與還原**：`podman.yml` 裝一個開機早期的 oneshot unit（`rshared-root.service`，
+`is_wsl` gate，`Before=sysinit.target`）跑 `mount --make-rshared /`。手動下不持久
+（`wsl --shutdown` 就沒了），必須走 unit。unit 除了 `enabled` 還要 **`state: started`**
+——否則「裝完到下次重開」之間 `/` 仍是 private（實測過這個空窗）。
+**不要用 `mount --make-rprivate /` 還原** —— 它是遞迴的，會把 WSL 刻意設成 shared 的
+`/mnt/wsl`、`/mnt/wslg` 一起改掉，那才真的可能弄壞 WSLg。要還原就移掉 unit ＋
+`wsl --shutdown`：傳播狀態不落地到任何檔案，重啟就回原廠，**不可能弄成永久壞掉**。
 
 **只用 podman，不 alias `docker=podman`（使用者決定）。** alias task 是 `state: absent`
 ——套用時**主動移除** `.bashrc` 裡既有的那行，不只是不再加。**compose 也不裝**（2026-07

@@ -115,11 +115,16 @@
   when: item.rc != 0
 
 # --- WSL2-only：mount propagation --------------------------------------------
-# WSL 的 `/` 是 private mount propagation（正常 systemd 系統開機時會把根設成 shared，
-# WSL 沒做）。rootless podman 會警告 `"/" is not a shared mount, ... missing mounts
-# with rootless containers`，且容器內 mount 傳播可能不正確（k3s 這類大量 mount 的負載
-# 特別會踩到）。手動 mount --make-rshared / 不持久（wsl --shutdown 就沒了），必須走
-# 開機早期的 oneshot unit 才會每次開機生效。
+# WSL 的 `/` 是 private mount propagation。根因不是 WSL 想隔離什麼，而是 systemd 只在
+# **非容器**環境才把根設成 shared（原始碼是 `detect_container() <= 0` 才做），而 WSL 被
+# systemd-detect-virt 判定成 `wsl`（＝容器）→ 那一步被跳過，WSL 自己的 /init 也沒接手。
+# 一般 systemd 機器的 `/` 就是 shared，所以這裡是把漏掉的一步補回標準狀態。詳見 CLAUDE.md。
+#
+# 後果：rootless podman 的長駐 pause namespace 收不到「它建立之後」host 才出現的 mount，
+# 那些路徑在容器裡會是**空目錄**。而 **podman 5.7 已經不印舊版那句 `"/" is not a shared
+# mount` 警告了**（實測零輸出）—— 這個失敗沒有任何線索，正是值得主動修掉的理由。
+# 手動 mount --make-rshared / 不持久（wsl --shutdown 就沒了），必須走開機早期的 oneshot
+# unit 才會每次開機生效。
 - name: WSL — rshared-root.service unit
   become: true
   ansible.builtin.template:
