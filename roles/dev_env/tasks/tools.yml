@@ -1,8 +1,8 @@
 ---
 # 日常自己會敲的 apt 小工具。**每個 task 自帶一個 tag**，所以可以單裝：
 #
-#     make install-lazygit     # 只裝這一個
-#     make install-tools       # 這個檔裡全部
+#     make install TAGS=lazygit   # 只裝這一個
+#     make install TAGS=tools     # 這個檔裡全部
 #
 # 為什麼是「一個 task 一個 tag」而不是以前那份 `dev_env_packages` 清單：清單裡的東西
 # 沒辦法個別點名（tag 必須在 parse 時就是靜態的，沒法從 list 變數生出來），而「用到時
@@ -14,7 +14,7 @@
 # （實測：lazygit 那個 task 最後拿到 `[lazygit, tools]`），所以兩種叫法都成立。
 #
 # 這裡的東西**都不是 Claude Code 需要的**，是純粹給人用的。要判斷某個工具該不該升進
-# core.yml，看 CLAUDE.md 裡 jq（升格）與 ripgrep（駁回）那組對照。
+# base.yml（那是相依層），看 CLAUDE.md 裡 jq（升格）與 ripgrep（駁回）那組對照。
 #
 # 2026-07 移除的：postgresql-client / redis-tools（改用 podman run 跑 client）、
 # ripgrep（Claude 的 native binary 內嵌了 rg，系統這支只有自己在 shell 敲才會用到）。

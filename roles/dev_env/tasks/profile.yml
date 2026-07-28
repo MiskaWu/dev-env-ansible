@@ -8,11 +8,11 @@
 #
 # ---- 為什麼是「偵測」而不是「讀開關」-----------------------------------------
 # 布林開關（install_go 等）2026-07-28 全部移除了，這個檔改成**看機器上實際有什麼**。
-# 這反而更對：使用者可能今天 `make install-go`、下週才 `make install-python`，中間沒有
+# 這反而更對：使用者可能今天 `TAGS=go`、下週才 `TAGS=python`，中間沒有
 # 任何地方記著「這台有 Go」。偵測讓兩次都產出正確的 .profile。
 #
 # 順序上安全：main.yml 把 profile.yml 放最後，所以同一次 run 裡 go.yml 已經裝完才輪到
-# 這裡 stat。而 profile 的 tag 掛在 [core, go, python, podman] 上，只要裝了會影響 PATH
+# 這裡 stat。而 profile 的 tag 掛在 [claude, go, python, podman] 上，只要裝了會影響 PATH
 # 的東西就一定會跟著跑（舊設計要自己記得 `TAGS=go,profile`，那個坑消失了）。
 #
 # check mode 的已知落差：`--check` 不會真的裝 Go，所以在還沒有 Go 的機器上乾跑，diff
