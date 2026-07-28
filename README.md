@@ -302,14 +302,29 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 **但光靠 `~/.profile` 擋不住，因為它只有登入 shell 會讀。** 行程樹的根不是登入 shell 的
 情境（`wsl.exe -e`、systemd unit、cron、Windows 側 spawn 的東西、未來的
 `ssh dev '<cmd>'`）全都讀不到 —— 2026-07-28 實測 `wsl -d dev -e bash -c 'command -v npm'`
-拿到的正是 Windows 那支。所以 `node.yml` / `go.yml` 另外把執行檔 symlink 進
-`/usr/local/bin/`（`node` `npm` `npx` `corepack` / `go` `gofmt`），那個目錄在上述每個
-context 的預設 PATH 裡都有，而且排在 Windows 路徑前面。
+拿到的正是 Windows 那支。所以凡是**沒有裝進預設 PATH** 的執行檔，role 都另外 symlink 進
+`/usr/local/bin/` —— 那個目錄在上述每個 context 的預設 PATH 裡都有，而且排在 Windows
+路徑前面：
+
+| 來源 | symlink 的執行檔 |
+|---|---|
+| `node.yml`（`/usr/local/node/bin`） | `node` `npm` `npx` `corepack` |
+| `go.yml`（`/usr/local/go/bin`） | `go` `gofmt` |
+| `claude.yml`（`~/.local/bin`） | `claude` |
+| `python.yml`（`~/.local/bin`） | `uv` `uvx` |
+
+apt 裝的（podman、lazygit、unzip、base、build-tools、playwright 的 `.so`）本來就在
+`/usr/bin`，不需要處理。
 
 兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的
 東西（`npm i -g` 的 bin 在 `/usr/local/node/bin`、`go install` 的在 `~/go/bin`，那些不會
 被 symlink 到）。要驗就實跑 `wsl -d dev -e bash -c 'command -v <cmd>'` —— 用互動 shell
 驗一定是綠的，驗不出東西。
+
+`claude` / `uv` 那兩列有個 go / node 沒有的但書：目標在 `$HOME` 底下，所以這支 root
+擁有的 symlink 綁死了一個使用者。這個 role 本來就是「一台機器供一個開發者」的模型
+（`~/.profile`、`~/.claude`、rootless podman 都只服務一個 uid），所以可以這樣做；同機
+真的要跑第二個使用者時要知道那會是後寫的贏，細節見 CLAUDE.md。
 
 已經誤裝過的專案，**光裝 Node 不會自動修好** —— 要先把舊的整包砍掉：
 

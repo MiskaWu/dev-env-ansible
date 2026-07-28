@@ -14,3 +14,29 @@
       curl -fsSL https://astral.sh/uv/install.sh | sh
     creates: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
     executable: /bin/bash
+
+# --- symlink 進 /usr/local/bin -------------------------------------------------
+# 理由同 claude.yml（那裡寫了跨使用者耦合那條完整的但書）：`~/.profile` 只有登入 shell
+# 會讀，實測 `wsl -d dev -e bash -c 'command -v uv'` 是 NOT FOUND。
+#
+# **uv 與 uvx 兩個都要**：uvx 不是 uv 的 alias 而是獨立的執行檔（實測兩者都是
+# ~/.local/bin 底下的實體檔案，版本各自回報 0.11.32），漏掉一個就是 `uvx` 在非登入
+# shell 找不到。
+#
+# 指向 ~/.local/bin/<名字> 這個穩定路徑 —— `uv self update` 是原地換掉那個檔案，
+# symlink 不受影響。
+- name: Check uv binaries are in place
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.env.HOME }}/.local/bin/uv"
+  register: _uv_bin
+  check_mode: false
+
+# when 是為了 `--check`（乾跑沒真的裝，來源不存在會讓 file: state=link 報錯）。
+- name: Symlink uv binaries into /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: "{{ ansible_facts.env.HOME }}/.local/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop: [uv, uvx]
+  when: _uv_bin.stat.exists

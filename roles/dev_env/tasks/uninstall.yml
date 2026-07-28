@@ -140,6 +140,15 @@
         - "{{ ansible_facts.env.HOME }}/.local/bin/claude"
         - "{{ ansible_facts.env.HOME }}/.local/share/claude"
 
+    # 第三個落地路徑。claude 是**兩段鏈**（/usr/local/bin/claude → ~/.local/bin/claude →
+    # versions/<版本>），上面刪掉中間那段之後這裡就是 dangling —— 正是上面註解講的
+    # 「command -v 還找得到，一跑就爆」，只是換一個目錄發生。
+    - name: 移除 Claude Code 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/bin/claude
+        state: absent
+
     - name: Claude Code —— 登記
       ansible.builtin.set_fact:
         _uninstall_done: "{{ _uninstall_done + ['claude'] }}"
@@ -161,6 +170,14 @@
       loop:
         - "{{ ansible_facts.env.HOME }}/.local/bin/uv"
         - "{{ ansible_facts.env.HOME }}/.local/bin/uvx"
+
+    # 同 claude / go / node：不刪就留下 dangling symlink。
+    - name: 移除 uv 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: "/usr/local/bin/{{ item }}"
+        state: absent
+      loop: [uv, uvx]
 
     - name: uv —— 登記
       ansible.builtin.set_fact:

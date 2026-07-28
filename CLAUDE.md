@@ -200,10 +200,29 @@
     （`/usr/bin`），不必管；**tarball / installer 裝進自己目錄的就要 symlink**。
     驗收方式是實跑 `wsl -d dev -e bash -c 'command -v <cmd>'`，不要用互動 shell 驗
     ——互動 shell 讀過 `.profile`，一定是綠的，驗不出東西。
-  - **已知未修：`~/.local/bin` 的 `claude` 與 `uv` 有同樣的病**（上表實測 NOT FOUND），
-    但**不能用同一招** —— symlink 進 `/usr/local/bin` 要 root、而且 root 擁有的 symlink
-    指向某個使用者的 `$HOME`，在多帳號機器上語意是錯的。要修得另想方案（改 installer
-    的目標路徑、或 `/etc/profile.d` + 接受它同樣只對登入 shell 有效）。
+  - **`~/.local/bin` 的 `claude` / `uv` / `uvx` 也一樣做（2026-07-28 補上）。** 本條原本
+    寫「不能用同一招，因為 root 擁有的 symlink 指向某個使用者的 `$HOME`，多帳號機器上
+    語意是錯的」——**推翻了，理由是那個前提本來就不成立**：這個 role 從頭到尾就是
+    「一台機器供一個開發者」的模型（寫 `~/.profile`、`~/.claude`，把 claude / uv 裝進
+    某個 `$HOME`，rootless podman 也只設一個 uid），「哪個使用者」在這裡從來不模糊。
+    為一個這個 role 不支援的情境放棄一致性、讓最常被腳本呼叫的 `claude -p` 繼續壞著，
+    划不來。
+    - **但它確實引入了一層以前沒有的跨使用者耦合，這個要記著**：`~/.profile` 只影響
+      本人，`/usr/local/bin` 的 symlink 會讓**別的使用者**也解析到這一個人的 binary，
+      同機第二個使用者跑一次就是後寫的贏、而且是靜默的。真要支援多使用者，逃生口是
+      改放一支解析 `$HOME` 的 wrapper script
+      （`exec "${HOME:?}/.local/bin/claude" "$@"` —— **真實檔案不是 shell function**，
+      所以非互動 shell 一樣拿得到，符合「挑工具先問非互動 shell 拿不拿得到」那條）。
+    - **一定要指向 `~/.local/bin/<名字>`，不要指向 `versions/<版本>`。** claude 自動
+      更新是「寫新的 `versions/<新版>` 再把 `~/.local/bin/claude` 重指過去」，指在穩定
+      路徑上這條**兩段鏈**更新後照樣通；指到版本目錄則每次更新都變 dangling。實測
+      `readlink -f /usr/local/bin/claude` 一路解到 `versions/2.1.220`。
+      `uv self update` 是原地換檔，同樣不受影響。
+    - **`uvx` 不是 `uv` 的 alias，是獨立執行檔**（實測兩個都是 `~/.local/bin` 底下的
+      實體檔案），漏掉就是 `uvx` 在非登入 shell 找不到。
+    - 做完之後**這個 role 裝的每一樣東西都在預設 PATH 裡了**，實測 `wsl -d dev -e`
+      下 claude / uv / uvx / node / npm / npx / corepack / go / gofmt / podman /
+      lazygit / unzip 全部命中。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
