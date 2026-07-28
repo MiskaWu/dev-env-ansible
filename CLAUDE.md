@@ -7,10 +7,11 @@
 
 ## 慣例
 
-- **核心只有 Claude Code + 它的最低相依，其餘一律是選裝。** 這個 repo 是「以 Claude +
-  Ansible 為基準的環境準備工具」，所以 `base.yml` 的 core packages（`ca-certificates` /
-  `curl` / `git` / `jq`）與 `claude.yml` 無條件跑，**其他每一個 import 都必須有 `when`**——
-  **包含 Go**（2026-07 之前它是無條件必裝，那是分層畫錯）。判斷「這個要不要放 core」
+- **核心只有 Claude Code + 它的最低相依，其餘一律是選裝。** 這個 repo 是「協助把 Claude
+  開發環境準備起來」的工具，所以 `core.yml` 的 core packages（`ca-certificates` / `curl` /
+  `git` / `jq`）與 `claude.yml` 掛 `core` tag、`make install` 就這些，**其他每一個 import
+  都必須有自己的 tag、要自己點名才會跑**——**包含 Go**（2026-07 之前它是無條件必裝，
+  那是分層畫錯）。判斷「這個要不要放 core」
   只問一句：少了它還能不能把這台機器準備起來？「好用」不是理由。
   **`jq` 是唯一通過這關的「小工具」（2026-07-27 從選裝升上來）**，靠的不是好用，是
   `install.sh` 裡真的有它的分支：解 manifest checksum 時有 jq 走 jq、沒有就退回
@@ -49,17 +50,32 @@
   **這組對照就是這條規則的範本**：兩個工具都被 Claude「用到」，但 jq 是外部相依
   （installer 是 shell script，沒辦法內嵌），rg 是自帶。要往 core 加東西就查到這個
   程度為止 —— 「Claude 會用到」不等於「Claude 需要系統上有」。
-- **多裝一個 apt 小工具＝在 `dev_env_packages` 加一行**，不要開新的 task 檔。獨立 task 是
-  留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
+- **「裝不裝」由 tag 決定，不要再引入布林開關（2026-07-28 整組移除）。** 以前同時有兩套
+  選擇機制：布林開關（`install_go` 等，宣告式：「這台機器的定義包含 Go」）與 tag（命令式：
+  「這次只跑這段」）。既然定位是「Claude 環境 + 其他用到時再裝」，那就是純命令式，宣告式
+  那層是多餘的。使用者端入口是 `make install-<tag>`。**相依關係也用 tag 表達** ——
+  `build-tools.yml` 在 `main.yml` 掛 `[build-tools, go, python]`，於是 `--tags python`
+  自動把編譯工具鏈帶進來（`--list-tasks` 實測確認），比舊的
+  `install_build_tools: "{{ install_go or install_python }}"` 好在：多一個需要編譯器的東西
+  只要多掛一個 tag，不必回頭改運算式。加新 import 時三件事：給它 tag、如果會影響 PATH
+  就把 tag 也加到 `profile.yml` 那行、回 `list.yml` 補一行。
+  **代價要記著**：沒有「一句話把這台機器收斂回我要的組合」了，所以 `make list` 改成偵測
+  機器上實際有什麼（`stat` 那幾個 binary），`profile.yml` 也改成偵測而不是讀開關。
+- **多裝一個 apt 小工具＝在 `tools.yml` 加一個帶自己 tag 的 task**，不要開新的 task 檔。
+  獨立檔案是留給「要查版本 / 抓 tarball / 跑官方 installer」的東西（`go.yml`、`python.yml`）。
   以前 psql/redis 有自己的 `clients.yml` + `install_clients`、lazygit 也差點為了一句
   `apt install` 開一個檔 + 一個布林 + `main.yml` 一筆 + README 一列——就是要避免那個。
-  **但編譯工具鏈不進那個清單**：`build-essential` 不是「你會敲的工具」，是 Go（cgo）與
-  uv（C extension）共用的前置，所以獨立成 `install_build_tools`。清單是「日常敲的東西」，
-  別讓它變成什麼都往裡丟的雜物袋。
+  （2026-07-28 之前這些是 `dev_env_packages` 一份清單裡的一行。改成一 task 一 tag 是為了
+  能單裝 —— tag 必須在 parse 時就是靜態的，沒辦法從 list 變數生出來。成本從一行變五行，
+  這是 per-tool 選擇的必要代價。）
+  **但編譯工具鏈不進 `tools.yml`**：`build-essential` 不是「你會敲的工具」，是 Go（cgo）與
+  uv（C extension）共用的前置，所以獨立成 `build-tools.yml`、掛在它們的 tag 底下。
+  `tools.yml` 是「日常敲的東西」，別讓它變成什麼都往裡丟的雜物袋。
 - **這個 role 只裝不卸（使用者決定），卸載一律手動。** apt 的 `state: present` 只保證
-  「有」，所以從 `dev_env_packages` 刪掉只是「以後不裝」，已經裝好的會留著。**不要**因此
-  去加一個「absent 清單 + `purge`」的機制——那等於每次 `apply` 都跑一遍破壞性動作，
-  清單打錯一個字就照刪；移除交給使用者刻意執行。2026-07 加過又拿掉，別再繞回來。
+  「有」，所以從 `tools.yml` 刪掉一個 task 只是「以後不裝」，已經裝好的會留著。**不要**因此
+  去加一個「absent 清單 + `purge`」的機制、也不要加 `make uninstall-%`——那等於把破壞性
+  動作放進日常路徑，清單打錯一個字就照刪；移除交給使用者刻意執行。2026-07 加過又拿掉，
+  別再繞回來。
   手動移除前先 `apt-get -s purge --autoremove <pkg>` 看影響範圍，發行版自帶的尤其要看：
   `tmux` 是 Ubuntu WSL base image 內建（跟 `byobu`、`ubuntu-wsl` 同一批裝進來，dpkg.log
   可查，所以 role 那行 `apt: tmux` 一直是 no-op），purge 它會連 `byobu` 和 `ubuntu-wsl`
@@ -88,15 +104,21 @@
 - **`~/.profile` 只有一個 managed block**（`profile.yml` 的 `blockinfile`）。以前 go / claude /
   python / podman 四個 task 檔各自 `lineinfile` 一行，`~/.local/bin` 還被寫了兩次，PATH 順序
   沒人管得住。要加環境變數就往那個 block 加，別回頭散寫。另外兩條配套規則：
-  - **開關在 Jinja `{% raw %}{% if %}{% endraw %}` 裡一定要 `| bool`。** `when:` 是 Ansible
-    自己做布林轉換、看得懂 `-e install_go=false` 傳來的字串 `"false"`；`{% raw %}{% if %}{% endraw %}`
-    是純 Jinja，非空字串一律 truthy。少了 `| bool`，`make apply EXTRA='-e install_go=false'`
-    會裝出「Go 沒裝但 `.profile` 有 Go PATH」的環境，而用 `group_vars` 傳真 YAML 布林卻正常
-    ——**只有某一種傳法會壞**，所以更要寫死。2026-07 加 `install_go` 時踩到。
+  - **block 的內容讀「機器上實際有什麼」，不讀開關**（`stat /usr/local/go/bin/go`、
+    `stat /usr/bin/podman`）。理由是命令式模型下沒有任何地方記著「這台有 Go」——使用者
+    可能今天 `make install-go`、下週才 `make install-python`，偵測讓兩次都產出正確的
+    `.profile`。順序上安全：`profile.yml` 是 `main.yml` 最後一個 import。
+    **附帶好處是整類 `| bool` 陷阱消失了**：`stat.exists` 是真布林，而以前
+    `-e install_go=false` 傳進來是字串 `"false"`，`when:` 看得懂但 Jinja
+    `{% raw %}{% if %}{% endraw %}` 一律 truthy，少寫 `| bool` 就會裝出「Go 沒裝但
+    `.profile` 有 Go PATH」——**只有某一種傳法會壞**，最難查的那種。2026-07 踩過，
+    2026-07-28 隨開關一起移除。
+    已知落差：`--check` 不會真的裝，所以在還沒有 Go 的機器上乾跑，diff 會顯示成不含
+    Go PATH。那是 check mode 的本質（後面的 task 看不到前面沒真的做的事），不是 bug。
   - **`lineinfile: state=absent` 不認 managed block 的邊界**，它比對整行、block 內外一起刪。
-    清舊版殘留的那幾行字串，必須確定在**任何開關組合下**都不會跟 block 產出的行逐字相同，
-    否則會變成「清掉 → blockinfile 補回 → 每次 apply 都 changed」。`.local/bin` 那行就是這樣
-    才被拆成獨立、`when: install_go | bool` 的 task。
+    清舊版殘留的那幾行字串，必須確定在**任何情況下**都不會跟 block 產出的行逐字相同，
+    否則會變成「清掉 → blockinfile 補回 → 每次跑都 changed」。`.local/bin` 那行就是這樣
+    才被拆成獨立、`when: _go_bin.stat.exists` 的 task。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
@@ -109,18 +131,32 @@
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：
   - **`make list`** 是唯一的入口，跑 `list.yml`（`tags: [list, never]`，`never` 保證一般
-    apply 掃不到）。它印的開關值是 **play 裡求值後**的結果，`group_vars` / `-e` 的覆蓋
-    都算進去 —— 這正是它必須是 ansible task 而不是 Makefile 裡一串 `echo` 的原因，
+    install 掃不到）。它印的 ✓／· 是**當場 `stat` 出來**的，不是文件裡的宣稱 —— 開關移除
+    之後沒有東西記著「這台該有什麼」，偵測正好補上那個缺口。它仍然必須是 ansible task
+    而不是 Makefile 裡一串 `echo`：`podman_firewall_driver` 這種求值後才知道的東西，
     role defaults 只有在 play 的 scope 裡才拿得到。
   - **tag 清單**由 `make list` 結尾直接跑 `--list-tags` 取得，完全不手寫。
-  - **往 `main.yml` 加一個 import 時，回 `list.yml` 補一行。** 只有那句說明是人寫的；
-    ✓／· 讀真實變數，不會騙人。
-- **`make apply TAGS=xxx` 打錯字會靜默無事發生** —— ansible 對不存在的 tag 不報錯、只是
-  什麼都不做，一路綠燈跑完卻一個套件都沒裝。Makefile 的 `_check-tags` 在動作前先比對
-  `--list-tags` 的結果，不存在就 fail。**別把這個 guard 拿掉**，它擋的是最難發現的那種失敗。
-  另外注意：**單跑一個 tag 不會帶到 `profile`**，動到 `install_go` / `container_runtime`
-  這種會影響 PATH 的開關要 `TAGS=go,profile`。（不把 `profile` 改成 `always` 是刻意的——
-  那會讓 `make facts` 從唯讀變成會改 `~/.profile`。）
+  - **往 `main.yml` 加一個 import 時，回 `list.yml` 補一行。** 只有那句說明與偵測路徑是
+    人寫的；✓／· 不會騙人。偵測路徑挑「裝完一定會出現的檔案」（`build-essential` 是
+    metapackage、沒有自己的檔案，用 `/usr/bin/gcc` 當代理）。
+- **`make install-xxx` 打錯字會靜默無事發生** —— ansible 對不存在的 tag 不報錯、只是
+  什麼都不做，一路綠燈跑完卻一個套件都沒裝。Makefile 的 `_assert_tags` 在動作前先比對
+  `--list-tags` 的結果，不存在就 fail（實測 `make install-pythn` → exit 2）。**別把這個
+  guard 拿掉**，它擋的是最難發現的那種失敗。
+  - **`_assert_tags` 是 `define`、寫在 recipe 裡，不是當前置條件的 target。** 兩個實測
+    出來的理由：pattern rule 的 target-specific 變數**傳不到前置條件**（`install-%: TAGS = $*`
+    設好了，前置的 `_check-tags` 收到的仍是空字串），而且 phony 前置條件 make 只會做一次
+    —— `make install-go install-python` 只檢查得到第一個。寫在 recipe 裡兩個問題都沒有。
+  - **`_TAGS` / `_ARGS` 必須用 `=` 不能用 `:=`。** 遞迴展開才吃得到 `install-%` 設的
+    target-specific `TAGS`；用 `:=` 會在 parse 時把當時還空的 `TAGS` 定死，於是
+    `make install-python` 靜默變成「不帶 `--tags`、全部裝一遍」。
+  - **不要為了 `make install python`（空格形式）加 catch-all 規則 `%:;@:`。** make 把
+    空格後面那個字當成另一個 target，撐起來就得吃掉未知 target —— 而那正好會讓
+    `make pythn` 靜默成功什麼都不做，跟上面那個 guard 擋的是同一種病。pattern rule
+    (`install-%`) 是純標準 make、零 hack，維持這個形狀。
+  - **`profile` 不必再自己補**：它掛在 `[profile, core, go, python, podman]` 上，任何會
+    影響 PATH 的項目都會帶到它（舊設計得記得寫 `TAGS=go,profile`）。仍然刻意**不用**
+    `always` —— 那會讓 `make facts` 從唯讀變成會改 `~/.profile`。
 - **role 名 `dev_env` 用底線**（Galaxy 規定，不能連字號）。repo 名可用連字號。
 - **`.gitattributes` `* text=auto eol=lf`**：只在 Linux 跑，全 LF。Makefile 用 tab、CRLF 會壞；
   `.yml` 裡餵給 shell task 的內容也怕 `\r`。
@@ -139,7 +175,7 @@
 
 **不要在 ansible.cfg 設 `stdout_callback = yaml`。** 舊的 `community.general.yaml` callback
 在 ansible-core 2.20 已移除，設了會 `[ERROR]: The 'community.general.yaml' callback plugin
-has been removed` **整個 run 開頭中止、什麼都沒裝**。更陰險：`make apply` 回非零，但外層
+has been removed` **整個 run 開頭中止、什麼都沒裝**。更陰險：`make install` 回非零，但外層
 （背景任務 / wsl.exe）可能把 exit code 誤報成 0，看起來「成功」實則沒做事。要 yaml 輸出用
 default callback 的 `result_format`，別用舊 callback。
 
@@ -217,7 +253,7 @@ printf '[network]\nfirewall_driver = "nftables"\n' \
   | sudo tee /etc/containers/containers.conf.d/50-firewall-driver.conf
 podman network create fwtest
 podman run --rm --network fwtest docker.io/library/alpine true && echo OK || echo FAIL
-podman network rm -f fwtest && make apply     # 還原
+podman network rm -f fwtest && make install-podman     # 還原
 ```
 
 **driver 對應的後端工具要自己裝。** iptables driver 會呼叫 `iptables` 二進位、nftables
@@ -288,7 +324,7 @@ systemctl --user start ... ` + `failed_when: false`，race 擋住不致命）。
 （journal: `Failed to spawn executor: Device or resource busy`），整個 user session
 degraded。`--terminate` 只停單一 distro、留了 VM 層狀態清不掉；**full `wsl --shutdown`
 重置整個 VM 才行**——之後乾淨 session 一來 `user@` active、symlink-enabled 的 podman.socket
-自動起、socket 端到端通（實測）。所以 `make apply` 裝完，Windows 端跑一次 `wsl --shutdown`
+自動起、socket 端到端通（實測）。所以 `make install-podman` 裝完，Windows 端跑一次 `wsl --shutdown`
 再重進。這不是安裝失敗，是平台 race。
 
 （另：`.config` 若被 root 建走，建 symlink 會 permission denied——見 wsl-bootstrap 的
