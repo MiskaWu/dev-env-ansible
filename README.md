@@ -21,8 +21,9 @@ make uninstall TAGS=go        # 移除一項（必須點名，不帶 TAGS 會被
 （installer 要）；`TAGS=claude` 會帶 `curl` / `jq`；任何會影響 PATH 的項目都會順手更新
 `~/.profile`。
 
-（git 身分與 SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在 bring-up 就備好，
-因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。）
+（git 身分與**開機那組** SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在
+bring-up 就備好，因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。
+**之後**才多出來的 git 網域則有 `make ssh-host`，見下。）
 
 **Host-agnostic** —— WSL2 專屬的 task 用 `is_wsl` fact gate 起來，所以同一個 role 也能跑在
 純 Ubuntu VM、homelab 節點或 WSL distro。搭配 [`wsl-bootstrap`](../wsl-bootstrap)：它產出一台
@@ -100,6 +101,47 @@ sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行
 但**這個 repo 沒有記著「這台不該有什麼」** —— 所以下一次不帶 `TAGS` 的 `make install`
 會把它裝回來。這是純命令式模型的必然代價，跟上面「沒有一句話收斂機器」是同一件事。
 
+## 多一個 git 網域：`make ssh-host`
+
+公司內部 GitLab、客戶的 Gitea、第二個 GitHub 帳號 —— 這些是 bring-up 之後才冒出來的，
+一個指令搞定（設定 + 金鑰 + 公鑰印出來）：
+
+```bash
+make ssh-host HOST=gitlab.dev.baasgames.com          # 沒有 key 就生一把，印出公鑰
+make ssh-host HOST=gitlab.dev.baasgames.com KEY=~/.ssh/id_ed25519_dev_gitlab   # 用既有的
+make ssh-host-rm HOST=gitlab.dev.baasgames.com       # 移掉設定（key 保留）
+```
+
+**寫的是 `~/.ssh/config.d/<網域>.conf`，一個 host 一個檔**，並在 `~/.ssh/config` 檔頭補一行
+`Include config.d/*.conf`（OpenSSH 7.3+ 就有；相對路徑一律以 `~/.ssh` 為基準）。
+**不碰 wsl-bootstrap 的 managed 區塊** —— 兩支工具在同一個檔裡各切各的正規表示式是找麻煩，
+所以所有權切乾淨：bootstrap 擁有它自己那對標記之間的內容，這裡擁有整個 `config.d/`。
+理由跟 `containers.conf.d` / `registries.conf.d` 用 drop-in 是同一條。
+
+界線是**時間，不是主題**：`github.com` / `gitlab.com` 仍然歸 bring-up（key 得先在才
+clone 得動私有 repo，包含這個 repo 自己），日常再冒出來的網域歸這裡 —— 走 bring-up 得回
+Windows 改 `config.ps1` 再重跑一次，那是為「建一台機器」設計的路徑，不是為「加一行設定」。
+
+幾個刻意的選擇：
+
+- **`KEY=` 指到的檔案不存在就直接失敗**，不順手生一把。那正是打錯路徑的樣子，而它的
+  失敗會延遲很久才顯形（你拿舊公鑰去貼，然後對著 `Permission denied` 查半天）。真要在
+  自訂路徑生新的就明講 `GEN=1`；不帶 `KEY` 時路徑是我們自己組的，沒有這個風險，所以
+  預設就是「沒有就生」。
+- **key 的預設名字用完整網域**（`id_ed25519_dev_gitlab_dev_baasgames_com`）。取第一段標籤
+  會變成 `id_ed25519_dev_gitlab` —— 那正是 bring-up 給 `gitlab.com` 的那把，會靜默把同一把
+  key 用到兩個不同平台。
+- **不跑 `ssh-keyscan`**：那等於替你把第一次連線的指紋吞下去。指令最後印
+  `ssh -T git@<網域>` 讓你自己連、自己確認。
+- **寫完會問 `ssh -G <網域>` 驗一次**，確認它真的解析到那把 key。這比「檔案寫出去了」
+  強得多 —— 順便驗到 Include 有沒有生效、有沒有被更早匹配的設定攔走（ssh 對每個關鍵字
+  都是**先出現的贏**，不是後蓋前）。
+- **移除只刪設定檔**，key 留著（同 `uninstall` 的 `DATA` 慣例），而且訊息裡的 key 路徑是
+  **從那個檔讀出來**的，不是猜的 —— 印錯路徑會讓人 `rm` 掉別的東西。
+
+commit 的名字／信箱不歸這裡管，仍然是 `~/.gitconfig` 那份全域設定。公司 repo 要用不同
+身分，用 git 自己的 `includeIf`（按目錄切換）。
+
 ## 檔案結構
 
 ```
@@ -107,10 +149,11 @@ dev-env-ansible/
 ├── ansible.cfg
 ├── site.yml                    # 頂層 playbook（安裝）
 ├── uninstall.yml               # 反安裝的入口 —— 獨立 playbook，理由見下
+├── ssh-host.yml                # make ssh-host 的入口 —— 吃參數，所以也是獨立 playbook
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
     ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、firewall driver）
-    ├── templates/              # containers 設定 drop-in、systemd unit
+    ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
@@ -123,9 +166,15 @@ dev-env-ansible/
         ├── python.yml          # uv                                   (tags: python)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
         ├── uninstall.yml       # 反安裝：只碰 role 獨佔的路徑   (由 uninstall.yml 進入)
+        ├── ssh-host.yml        # ~/.ssh/config.d 的 drop-in      (由 ssh-host.yml 進入)
         └── profile.yml         # ~/.profile 單一 managed block
                                 #      (tags: [profile, claude, go, python, podman])
 ```
+
+**`ssh-host` 也是獨立 playbook，但理由跟 uninstall 不同：它吃參數。** site.yml 那邊每個
+tag 都是「一個可以裝的東西」，塞一個要 `HOST=` 的進去會讓 `make list` 多出一個看起來可裝
+、實際上不帶參數只會失敗的項目，還得再掛一個 `never`。參數化的動作跟可安裝項目是兩種
+東西，各自有自己的入口比較誠實。
 
 **反安裝為什麼是獨立 playbook，不是 `site.yml` 裡一個 tag。** 因為 ansible 的 `--tags`
 是 **OR** 語意：`--tags uninstall,go` 會把「掛 uninstall 的 task」與「掛 go 的 task」
@@ -251,6 +300,7 @@ make check   TAGS=podman     # 預覽某一項會動什麼（diff）；LOCAL 預
 make install TAGS=podman     # 套用
 make install                 # 或把全部重跑一次（會跟著上游走版，例如 Go latest）
 make uninstall TAGS=node     # 用不到了就拿掉（apt 裝的會擋下來並教你手動怎麼做）
+make ssh-host HOST=gitlab.dev.baasgames.com   # 多一個 git 網域（設定 + key + 印公鑰）
 ```
 
 `list` 與 `check` 回答的是不同問題，兩個都留著：**`list` 是「有哪些東西可裝、這台已經有

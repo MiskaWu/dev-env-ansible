@@ -111,6 +111,43 @@
     tag 之間沒有 AND，「移除語境下的 go」沒辦法用 tag 組合表達。兩個 playbook 各自
     有一份乾淨的 tag 命名空間，`make list` 印的是 site.yml 的、guard 兩份都問。
   - **加新項目的判準**：只有「role 獨佔一整個目錄」的才適合進 `uninstall.yml`。
+- **`make ssh-host HOST=<網域>`：git host 的 SSH 設定，寫 `~/.ssh/config.d/`，不碰
+  `~/.ssh/config` 的既有內容（2026-08-05 加）。** 界線是**時間，不是主題** —— 「SSH keys
+  不在這個 role」那條仍然成立，但它指的是**開機那一組**（github.com / gitlab.com，key 得
+  先在才 clone 得動私有 repo，包含這個 repo 自己）。日常又冒出一個網域（公司內部 GitLab）
+  走 bring-up 要回 Windows 改 `config.ps1` 再重跑，那是為「建一台機器」設計的路徑。
+  - **所有權切乾淨，不是兩支工具在同一個檔裡互切**：bootstrap 擁有 `~/.ssh/config` 裡
+    它自己那對 `# >>> wsl-bootstrap managed` 標記之間的內容，我們擁有整個
+    `~/.ssh/config.d/`，唯一交集是檔頭那行 `Include config.d/*.conf`。讀過
+    provision.sh 確認它的作法是「sed 刪掉自己的區塊 → append 到檔尾」，所以**那行
+    Include 不會被洗掉**。同一條 drop-in 原則見 `containers.conf.d`。
+  - **`Include` 的四件事，2026-08-05 實測（OpenSSH_10.2p1）**：① 相對路徑一律以
+    **`~/.ssh`** 為基準，跟「正在讀哪個檔」無關（用 `-F /somewhere/config` 測，相對
+    Include 仍然解析到 `~/.ssh/config.d`）；② 同一個 Host 出現兩次是**先出現的贏**，
+    不是後蓋前；③ glob 沒對到任何檔**不是錯誤**，靜靜跳過（所以移除後把 Include 留著
+    無害）；④ include 進來的檔權限鬆（0660）ssh **不抱怨**，嚴格檢查只針對主 config。
+  - **Include 放 BOF ⇒ config.d 永遠優先於 bootstrap 的區塊**，這是必然不是偏好：
+    bootstrap 重跑是「刪自己的區塊 → append 到檔尾」，不管一開始插在哪都會收斂成這個
+    順序。所以一開始就擺對位置，而不是讓優先權取決於誰最後跑。
+  - **`ssh` 的 `~` 取自 passwd，不看 `$HOME`（實測）。** 寫完會跑 `ssh -G <host>` 驗
+    「真的解析到那把 key」，這一步在改寫 `HOME` 的沙箱裡**一定失敗**（ansible 的 file
+    task 用 `$HOME`、ssh 用 passwd，兩邊指到不同地方）。那是預期行為，assert 的
+    fail_msg 有寫；別為了讓沙箱綠燈去改成 `ssh -F`——帶 `-F` 反而失真，因為檔案裡的
+    相對 Include 仍然以 `~/.ssh` 為基準。
+  - **`KEY=` 指到不存在的檔就失敗，不順手生一把。** 那正是打錯路徑的樣子，而失敗會延遲
+    很久才顯形（拿舊公鑰去貼 → `Permission denied` → 查半天）。要在自訂路徑生新的才加
+    `GEN=1`；不帶 `KEY` 時路徑是我們自己組的、不可能打錯，所以預設就是「沒有就生」。
+  - **預設 key 名用完整網域**（`id_ed25519_dev_gitlab_dev_baasgames_com`），不取第一段
+    標籤 —— `gitlab.dev.baasgames.com` 取 `gitlab` 會撞上 bring-up 給 `gitlab.com` 的
+    `id_ed25519_dev_gitlab`，靜默把同一把 key 用到兩個平台。
+  - **移除時訊息裡的 key 路徑要從那個檔 `IdentityFile` 讀出來，不能用預設路徑推**——
+    `ssh-host-rm` 不帶 `KEY`，推出來的常常不是它實際綁的那把，而使用者會照著 `rm`。
+  - **刻意不跑 `ssh-keyscan`**（那等於替你吞掉第一次連線的指紋確認），改印
+    `ssh -T git@<host>`。也**不碰 git 身分** —— 那要用 git 自己的 `includeIf`。
+  - **獨立 playbook（`ssh-host.yml`），不進 site.yml。** 理由跟 uninstall 不同：**它吃
+    參數**。塞進 site.yml 會讓 `make list` 多出一個看似可裝、不帶 `HOST` 只會失敗的項目，
+    還得再掛一個 `never` 把 `never` 的語意搞糊。所以「每個 import 都要有自己的 tag」那條
+    在這裡不適用 —— 那條講的是可安裝項目，這是帶參數的動作。
 - **apt 裝的東西只裝不卸，`state: present` 只保證「有」。** 從 `tools.yml` 刪掉一個
   task 只是「以後不裝」，已經裝好的會留著。**不要**去加「absent 清單 + `purge`」的機制
   ——清單打錯一個字就照刪，而且那正是上面說的「替你做了不該替你做的決定」。

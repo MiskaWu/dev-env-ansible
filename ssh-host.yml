@@ -1,0 +1,43 @@
+---
+# `make ssh-host HOST=<網域>` / `make ssh-host-rm HOST=<網域>` 的入口。
+#
+# ---- 為什麼是第三個 playbook，不是 site.yml 裡一個 tag ------------------------
+# 因為它**吃參數**，而 site.yml 那邊每一個 tag 都是「一個可以裝的東西」。放進去會有三個
+# 後遺症，一個比一個難查：
+#
+#   1. `make list` 會多出一個 `ssh-host`，看起來像可裝的項目，但 `make install
+#      TAGS=ssh-host` 沒帶 HOST 只會失敗 —— 那份清單的意義就被稀釋了。
+#   2. 不帶 TAGS 的 `make install`（全裝）必須跳過它，於是又要掛 `never`，而 `never`
+#      在那個檔裡目前只有 `list` 一個用途（唯讀的輸出），語意會變糊。
+#   3. tag 命名空間跟 uninstall.yml 的理由一樣：一個 tag 在一個 playbook 裡只該有一種
+#      意思。
+#
+# 同理它**不進 main.yml**，所以「每一個 import 都必須有自己的 tag」那條規矩在這裡不適用
+# —— 那條講的是「可安裝項目」，這裡是一個帶參數的動作，形狀跟 uninstall 同一類。
+#
+# 內容與所有實測記錄在 roles/dev_env/tasks/ssh-host.yml 的檔頭。
+- name: SSH 設定：加／移除一個 git host
+  hosts: all
+  gather_facts: true
+
+  # 這四個都是「這一次執行的參數」，不是機器組態，所以擺在入口而不是 role 的
+  # defaults/main.yml（那裡放的是 go_version 那類「怎麼裝」的設定）。
+  # Makefile 用 `-e` 傳進來，extra-vars 的優先權最高，蓋得過這裡的預設值。
+  vars:
+    # 要設定的 host，例 gitlab.dev.baasgames.com。空的會被 assert 擋下。
+    ssh_host: ""
+    # 指定既有的 key（KEY=）。空的話用 ~/.ssh/id_ed25519_dev_<host>，沒有就生一把。
+    ssh_host_key: ""
+    # GEN=1：允許在 KEY 指的路徑上生一把新的。預設 false —— KEY 指到不存在的檔一律
+    # 視為打錯路徑並停下來（理由見 tasks/ssh-host.yml 檔頭）。
+    ssh_host_gen: false
+    # 生 key 時的註解（COMMENT=）。空的話用 <user>@<hostname>-<host> <日期>。
+    ssh_host_key_comment: ""
+    # present / absent。absent 由 `make ssh-host-rm` 傳進來，只刪 config.d 那個檔。
+    ssh_host_state: present
+
+  tasks:
+    - name: 加／移除 git host 的 SSH 設定
+      ansible.builtin.import_role:
+        name: dev_env
+        tasks_from: ssh-host.yml

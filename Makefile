@@ -14,6 +14,9 @@ PLAYBOOK  ?= site.yml
 # 反安裝走自己的 playbook —— ansible 的 --tags 是 OR 語意，沒辦法用 tag 組合表達
 # 「移除語境下的 go」（詳見 uninstall.yml 檔頭）。
 UNPLAYBOOK ?= uninstall.yml
+# git host 的 SSH 設定（`make ssh-host`）也走自己的 playbook —— 它吃參數而不是 tag，
+# 理由見 ssh-host.yml 檔頭。
+SSHPLAYBOOK ?= ssh-host.yml
 # TAGS：要裝什麼就寫在這裡，例 `make install TAGS=claude`、`TAGS=go,python`。
 # 不設就是全部。有哪些可用跑 `make list`——刻意不在這裡列，手抄一份就會漂移。
 TAGS      ?=
@@ -24,6 +27,16 @@ EXTRA     ?=
 # DATA=1：只給 `make uninstall` 用 —— 連資料（模組快取、build cache、uv 裝的 Python
 # runtime…）一起清，不只拿掉工具本身。預設保留，理由見 defaults/main.yml。
 DATA      ?=
+# 下面四個只給 `make ssh-host` / `make ssh-host-rm` 用。
+# HOST 必填（要設定的網域）；其餘可選：
+#   KEY=<路徑>   用既有的 key（不存在就失敗 —— 那是打錯路徑的樣子）
+#   GEN=1        允許在 KEY 指的路徑上生一把新的
+#   COMMENT=<字> 生 key 時的註解，預設 <user>@<hostname>-<host> <日期>
+# 不帶 KEY 時本來就是「沒有就生」，不需要 GEN。
+HOST      ?=
+KEY       ?=
+GEN       ?=
+COMMENT   ?=
 
 # ---- 內部組裝 --------------------------------------------------------------
 # COMMA：localhost, 裡的逗號會跟 $(if) 的引數分隔逗號相撞，必須用變數繞過。
@@ -45,8 +58,8 @@ _TAGS_OF = ansible-playbook $(1) $(_CONN) --list-tags \
 _TAGS_OF_PLAYBOOK  = $(call _TAGS_OF,$(PLAYBOOK))
 _TAGS_OF_UNINSTALL = $(call _TAGS_OF,$(UNPLAYBOOK))
 
-.PHONY: help init list check install uninstall syntax lint facts \
-	_ensure-ansible _check-tags _check-uninstall-tags
+.PHONY: help init list check install uninstall ssh-host ssh-host-rm syntax lint facts \
+	_ensure-ansible _check-tags _check-uninstall-tags _check-ssh-host
 
 help: ## 顯示所有可用命令
 	@awk 'BEGIN {FS = ":.*##"; printf "\n使用方式:\n  make \033[36m<target>\033[0m\n"} \
@@ -58,6 +71,9 @@ help: ## 顯示所有可用命令
 	echo
 	echo "移除是 make uninstall TAGS=<項目> —— 必須點名，不帶 TAGS 會被拒絕（沒有「全砍」）。"
 	echo "只支援 tarball / installer 裝的那幾項；apt 裝的要手動，指令會告訴你怎麼做。"
+	echo
+	echo "多一個 git 網域（例：公司內部 GitLab）用 make ssh-host HOST=gitlab.example.com ——"
+	echo "沒有 key 就生一把並印出公鑰，設定寫進 ~/.ssh/config.d/<網域>.conf。"
 
 ##@ 起手（乾淨機器）
 # bring-up 給的 baseline 只有 git + make。這個 target 把機器準備到「跑得動這個 repo」
@@ -96,6 +112,30 @@ install: _ensure-ansible _check-tags ## 裝東西：不帶 TAGS 全裝，或 TAG
 uninstall: _ensure-ansible _check-uninstall-tags ## 移除：必須帶 TAGS，例 TAGS=go；加 DATA=1 連快取一起清
 	ansible-playbook $(UNPLAYBOOK) $(_CONN) --tags $(TAGS) $(_LIMIT) $(EXTRA) \
 		$(if $(filter 1,$(DATA)),-e dev_env_uninstall_data=true,)
+
+##@ git host 的 SSH 設定
+# 「之後才多出來的網域」用的（典型：公司內部 GitLab）。開機那一組（github.com /
+# gitlab.com）仍然歸 bring-up —— 界線是時間不是主題，理由見 tasks/ssh-host.yml 檔頭。
+#
+# 寫的是 `~/.ssh/config.d/<host>.conf`（一個 host 一個檔），並在 `~/.ssh/config` 檔頭補一行
+# `Include config.d/*.conf`。**不碰 wsl-bootstrap 的 managed 區塊**，兩邊所有權完全分開。
+#
+# result_format=yaml 的理由同 `make list`：最後那則說明是多行的（公鑰、驗證指令），
+# 用預設的 JSON 格式會被壓成一行滿是 \n 的字串，正好是最需要看清楚的那一則。
+ssh-host: _ensure-ansible _check-ssh-host ## 加一個 git host：HOST=gitlab.example.com [KEY= GEN=1 COMMENT=]
+	@ANSIBLE_CALLBACK_RESULT_FORMAT=yaml \
+	ansible-playbook $(SSHPLAYBOOK) $(_CONN) $(_LIMIT) $(EXTRA) \
+		-e ssh_host='$(HOST)' \
+		$(if $(KEY),-e ssh_host_key='$(KEY)',) \
+		$(if $(filter 1,$(GEN)),-e ssh_host_gen=true,) \
+		$(if $(COMMENT),-e ssh_host_key_comment='$(COMMENT)',)
+
+# 只刪 ~/.ssh/config.d 那個檔。**key 一律保留**（key 是資料，同 uninstall 的慣例），
+# 那行 Include 也留著 —— 對空目錄無害，下次再加就直接生效。
+ssh-host-rm: _ensure-ansible _check-ssh-host ## 移除一個 git host 的 SSH 設定（key 保留）
+	@ANSIBLE_CALLBACK_RESULT_FORMAT=yaml \
+	ansible-playbook $(SSHPLAYBOOK) $(_CONN) $(_LIMIT) $(EXTRA) \
+		-e ssh_host='$(HOST)' -e ssh_host_state=absent
 
 ##@ 先看再動
 # 三個「先看」的指令，回答的是不同問題：
@@ -201,6 +241,30 @@ _check-uninstall-tags: _ensure-ansible
 		echo "可以自動移除的：$$known" >&2
 		exit 1
 	fi
+
+# ssh-host / ssh-host-rm 的 guard。只擋一件事：**HOST 沒給**（同 uninstall 的「必須點名」
+# ——「加一個 host」與「移除一個 host」都沒有「全部」這個意思）。順便把目前設定過的列出來，
+# 因為忘記的通常不是指令而是「我當初打的是哪個網域」。
+#
+# HOST 的**格式**檢查刻意不放這裡，留在 tasks/ssh-host.yml 的 assert：規則只該有一份，
+# 抄成兩份就會漂移（list.yml 檔頭記過同一個教訓）。
+_check-ssh-host:
+	@if [ -n "$(HOST)" ]; then exit 0; fi
+	echo "Error: 必須點名 HOST，例：" >&2
+	echo "    make ssh-host    HOST=gitlab.dev.baasgames.com" >&2
+	echo "    make ssh-host-rm HOST=gitlab.dev.baasgames.com" >&2
+	echo >&2
+	d="$$HOME/.ssh/config.d"
+	if compgen -G "$$d/*.conf" >/dev/null 2>&1; then
+		echo "目前設定過的 host（$$d）：" >&2
+		for f in "$$d"/*.conf; do
+			echo "    $$(basename "$$f" .conf)" >&2
+		done
+	else
+		echo "（$$d 底下還沒有任何設定；bring-up 給的 github.com / gitlab.com 不在這裡" >&2
+		echo "  ——那組在 ~/.ssh/config 的 wsl-bootstrap 區塊裡，本指令不碰）" >&2
+	fi
+	exit 1
 
 # bring-up 只給 git+make；ansible 由這裡自己補（不能用 ansible 裝 ansible）。
 # 是所有 ansible target 的前置，所以就算沒先跑 make init 也不會卡住 —— init 的價值

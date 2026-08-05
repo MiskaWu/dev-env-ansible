@@ -1,0 +1,296 @@
+---
+# `make ssh-host HOST=<網域>` / `make ssh-host-rm HOST=<網域>` 的內容 ——
+# 「**之後**才多出來的 git host」的 SSH 設定（典型：公司內部 GitLab）。
+#
+# ---- 這不是把 SSH key 搬回這個 role ------------------------------------------
+# 界線是**時間**，不是「SSH 屬於誰」：
+#
+#   - bring-up（wsl-bootstrap 的 provision.sh）負責**開機就要有的那一組**（github.com /
+#     gitlab.com）。它必須在那裡 —— key 得先在，才 clone 得動私有 repo，包含這個 repo 自己。
+#   - 這個檔負責**日常又冒出一個網域**。走 bring-up 的話得回 Windows 改 config.ps1、
+#     再跑一次 bootstrap.ps1 -Update，而那是為「建一台機器」設計的路徑，不是為
+#     「加一行設定」設計的。
+#
+# 所以 main.yml 檔尾那句「SSH keys 與 git 身分不在這個 role」仍然成立，只是多了一條窄的
+# 例外，而且**兩邊的所有權完全不重疊**（見下）。git 身分（~/.gitconfig）沒有跟著搬過來，
+# 那個 bring-up 一次設好就不太會變。
+#
+# ---- 為什麼是 config.d + Include，不是再開一個 managed 區塊 ------------------
+# `~/.ssh/config` 已經有一個 **wsl-bootstrap 的 managed 區塊**。再塞第二個區塊進同一個檔，
+# 就是兩支工具拿正規表示式在對方的檔裡切來切去 —— 這個 repo 對 containers.conf /
+# registries.conf 的結論一模一樣：**drop-in，不整檔覆寫**。
+#
+# 分工變成：bootstrap 擁有 `~/.ssh/config` 裡它自己那對標記之間的內容，我們擁有整個
+# `~/.ssh/config.d/`，兩邊唯一的交集是檔頭那一行 `Include`（bootstrap 的 sed 只刪自己
+# 的標記區塊、其餘原樣保留，所以那行不會被洗掉 —— 讀過它的 provision.sh 確認）。
+#
+# 2026-08-05 在本機實測（OpenSSH_10.2p1）：
+#
+#   | 測的事                                   | 結果                                      |
+#   |------------------------------------------|-------------------------------------------|
+#   | `Include config.d/*.conf`（相對路徑）    | ✅ 解析到 **~/.ssh/config.d/**            |
+#   | 同一個 Host 在 include 與主檔各一次       | **先出現的贏**                            |
+#   | glob 沒有對到任何檔                       | 不是錯誤，靜靜跳過                        |
+#   | include 進來的檔 0660                     | ssh 不抱怨（嚴格權限檢查只針對主 config） |
+#
+# 第一列是關鍵：相對路徑以 **~/.ssh** 為基準，跟「正在讀的是哪一個檔」無關（man
+# ssh_config 寫的就是這個，實測相符）。所以寫相對路徑就好，不必把 $HOME 烤進去。
+#
+# 第二列的推論要記著：**Include 放檔頭 ⇒ config.d 的設定優先於 bootstrap 的區塊**。
+# 這不是偏好，是必然 —— bootstrap 重跑時是「刪掉自己的區塊 → append 到檔尾」，所以不管
+# 我們一開始插在哪，收斂之後 Include 都在它前面。要蓋掉 bootstrap 給的 github.com，
+# 在 config.d 開一個檔就會生效（而不是「兩邊打架、看誰後跑」）。
+#
+# ---- KEY 帶了但檔案不在 → 直接失敗，不順手生一把 -----------------------------
+# 因為那正是**打錯路徑**的樣子，而它的失敗會延遲很久才顯形：我們默默生一把新的、你把
+# 舊的公鑰貼在 GitLab 上，然後看到 Permission denied 卻完全想不到是路徑打錯。
+# 想在自訂路徑生新的就明講 `GEN=1`。不帶 KEY 時沒有這個問題（路徑是我們自己組的，
+# 不可能打錯），所以預設就是「沒有就生」。
+#
+# ---- 刻意不碰的兩件事 --------------------------------------------------------
+#   - **known_hosts**：不跑 ssh-keyscan。那等於替你把第一次連線的指紋直接吞下去，
+#     TOFU 那道確認就沒了。改成在最後印出 `ssh -T git@<host>` 讓你自己連、自己看。
+#   - **移除時不動 key、也不動那行 Include**。key 是資料（同 uninstall 的 DATA 慣例），
+#     Include 留著對空目錄無害（實測 glob 沒對到檔不是錯誤），下次再加 host 就直接生效。
+
+- name: 參數檢查 —— HOST 必填，且必須是單純的主機名
+  ansible.builtin.assert:
+    that:
+      - ssh_host | length > 0
+      - ssh_host is match('^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+    fail_msg: |-
+      HOST 不合法：「{{ ssh_host }}」
+
+      只接受單純的主機名（英數與 . - _），因為**檔名就是它**
+      （~/.ssh/config.d/<host>.conf）—— 要對得起來 make ssh-host-rm 才找得回去。
+
+      萬用字元那類 Host pattern（例 *.dev.baasgames.com）請自己在 config.d 底下開一個檔：
+      那種寫法沒辦法從檔名唯一還原成 host，硬要支援只會讓移除變成猜。
+    quiet: true
+  tags: always
+
+# 全部路徑集中在這裡算一次。KEY 允許三種寫法，統一正規化成絕對路徑：
+#   /home/you/.ssh/k  → 原樣        ~/.ssh/k → 展開 ~        k → 當成 ~/.ssh/k
+# 第三種是為了「只記得 key 叫什麼名字」的情況；不補的話 ansible 會用**跑指令的 cwd**
+# （這個 repo 的目錄）去解析相對路徑，然後報一個跟原因無關的檔案不存在。
+- name: 決定路徑
+  ansible.builtin.set_fact:
+    _ssh_dir: "{{ ansible_facts.env.HOME }}/.ssh"
+    _ssh_dropin: "{{ ansible_facts.env.HOME }}/.ssh/config.d/{{ ssh_host }}.conf"
+    _ssh_key_given: "{{ ssh_host_key | regex_replace('^~', ansible_facts.env.HOME) }}"
+  tags: always
+
+# 預設 key 名沿用 bring-up 的形狀（id_ed25519_<tag>_<scope>），scope 用**完整 host** 而不是
+# 第一段標籤 —— `gitlab.dev.baasgames.com` 取第一段會變 `id_ed25519_dev_gitlab`，那正是
+# bring-up 給 gitlab.com 的那把，會靜默共用同一把 key 到兩個不同的平台去。
+- name: 決定 key 路徑
+  ansible.builtin.set_fact:
+    _ssh_key_path: >-
+      {{ (_ssh_key_given if _ssh_key_given is match('^/')
+          else _ssh_dir ~ '/' ~ _ssh_key_given)
+         if _ssh_key_given
+         else _ssh_dir ~ '/id_ed25519_dev_' ~ (ssh_host | replace('.', '_')) }}
+  tags: always
+
+# ---- 移除 --------------------------------------------------------------------
+- name: 移除
+  when: ssh_host_state == 'absent'
+  tags: always
+  block:
+    # 先把「它用的是哪把 key」從檔案裡讀出來 —— 刪掉之後就沒地方問了，而 `make ssh-host-rm`
+    # 不帶 KEY，這裡的 _ssh_key_path 只是**預設**路徑，跟這個檔實際指的那把常常不同。
+    # 報一個猜出來的路徑比不報更糟：使用者照著 rm 下去，刪掉的是別的東西。
+    - name: 讀出這個 host 現在綁的是哪把 key
+      ansible.builtin.slurp:
+        src: "{{ _ssh_dropin }}"
+      register: _ssh_dropin_content
+      failed_when: false
+      check_mode: false
+
+    - name: 記下那把 key 的路徑
+      ansible.builtin.set_fact:
+        _ssh_key_removed: >-
+          {{ (_ssh_dropin_content.content | b64decode
+              | regex_search('IdentityFile\s+(\S+)', '\1') | first)
+             if _ssh_dropin_content.content is defined else '' }}
+
+    - name: 移除 drop-in
+      ansible.builtin.file:
+        path: "{{ _ssh_dropin }}"
+        state: absent
+      register: _ssh_rm
+
+    - name: 移除完成
+      ansible.builtin.debug:
+        msg: |-
+          {{ '已移除' if _ssh_rm.changed else '本來就沒有' }}：{{ _ssh_dropin }}
+
+          保留（要清自己來）：
+          {% if _ssh_key_removed %}
+            - SSH key：一把都沒動 —— key 是資料，跟 make uninstall 預設不刪快取是同一個
+              慣例。**先確認沒有別的 host 也在用它**（grep 一下 config.d）再刪：
+              rm -f {{ _ssh_key_removed }} {{ _ssh_key_removed }}.pub
+          {% else %}
+            - SSH key：~/.ssh 底下的 key 一把都沒動。
+          {% endif %}
+
+            - ~/.ssh/config 檔頭那行 Include：留著對空目錄無害（glob 沒對到檔不是錯誤），
+              下次再加 host 就直接生效。
+            - 平台上的公鑰：GitLab / GitHub 那邊的授權要自己去撤。
+
+# ---- 新增 / 更新 --------------------------------------------------------------
+- name: 新增
+  when: ssh_host_state != 'absent'
+  tags: always
+  block:
+    - name: 確保 ~/.ssh 與 ~/.ssh/config.d 存在
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ _ssh_dir }}"
+        - "{{ _ssh_dir }}/config.d"
+
+    - name: 看 key 在不在
+      ansible.builtin.stat:
+        path: "{{ _ssh_key_path }}"
+      register: _ssh_key_stat
+      check_mode: false
+
+    # 只在「要生新 key」的路徑上跑，純粹是為了讓下面那則錯誤訊息能列出你已經有哪些 key
+    # （打錯 KEY 的人多半只是名字記錯，把清單擺在眼前比叫他自己 ls 有用）。
+    - name: 盤點 ~/.ssh 現有的 key
+      ansible.builtin.find:
+        paths: "{{ _ssh_dir }}"
+        patterns: "*.pub"
+      register: _ssh_pubs
+      check_mode: false
+      when: not _ssh_key_stat.stat.exists
+
+    - name: KEY 指定的檔案不存在 —— 停下來（要生新的請加 GEN=1）
+      ansible.builtin.fail:
+        msg: |-
+          KEY 指到的檔案不存在：{{ _ssh_key_path }}
+
+          沒有順手幫你生一把，因為這正是**路徑打錯**的樣子 —— 生了之後你會拿舊公鑰去貼、
+          再對著 Permission denied 查半天。兩條路：
+
+            要用既有的 key：把 KEY 改成正確路徑。這台現有的：
+          {% for f in (_ssh_pubs.files | default([])) | map(attribute='path') | map('basename') | map('regex_replace', '\.pub$', '') | sort %}
+                {{ _ssh_dir }}/{{ f }}
+          {% endfor %}
+
+            要在這個路徑生一把新的：同一個指令加 GEN=1。
+            要我決定名字並生一把：**不要帶 KEY**（會生 ~/.ssh/id_ed25519_dev_{{ ssh_host | replace('.', '_') }}）。
+      when:
+        - not _ssh_key_stat.stat.exists
+        - ssh_host_key | length > 0
+        - not (ssh_host_gen | bool)
+
+    # `creates:` 讓它冪等（key 在就跳過）。這裡不必像 curl|bash 那樣另外補 pipefail ——
+    # 沒有 pipeline，ssh-keygen 的 exit code 直接就是成敗。
+    #
+    # 註解格式沿用 bring-up 的慣例：<user>@<環境>-<scope> <日期>，方便日後在平台上認出
+    # 「這把是哪台機器、哪個用途、什麼時候生的」再決定撤不撤。COMMENT= 可以整個換掉。
+    - name: 產生 ed25519 key（沒有才生）
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -N '' -C "{{ _ssh_key_comment }}" -f {{ _ssh_key_path }}
+        creates: "{{ _ssh_key_path }}"
+      vars:
+        _ssh_key_comment: >-
+          {{ ssh_host_key_comment if ssh_host_key_comment
+             else ansible_facts.user_id ~ '@' ~ ansible_facts.hostname ~ '-' ~ ssh_host
+                  ~ ' ' ~ ansible_facts.date_time.date }}
+      register: _ssh_keygen
+      when: not _ssh_key_stat.stat.exists
+
+    - name: 寫入 ~/.ssh/config.d 的 drop-in
+      ansible.builtin.template:
+        src: ssh-host.conf.j2
+        dest: "{{ _ssh_dropin }}"
+        mode: "0600"
+
+    # 只補這一行，其餘內容一律不碰（bootstrap 的 managed 區塊、你手加的 journal.github.com
+    # 都在同一個檔裡）。regexp 是為了認出「已經有一行 Include 指向 config.d」的各種寫法
+    # （帶 ~/.ssh/ 前綴的那種），否則每換一種寫法就會多疊一行。
+    #
+    # insertbefore: BOF —— 見檔頭：反正 bootstrap 重跑後也會收斂成這個順序，那就一開始
+    # 就擺在正確的位置，而不是讓「誰先誰後」取決於誰最後跑。
+    - name: ~/.ssh/config 檔頭補上 Include
+      ansible.builtin.lineinfile:
+        path: "{{ _ssh_dir }}/config"
+        regexp: '^\s*Include\s+\S*config\.d/\*\.conf\s*$'
+        line: "Include config.d/*.conf"
+        insertbefore: BOF
+        create: true
+        mode: "0600"
+
+    # 真的去問 ssh「你現在會拿哪把 key 連這個 host」。這比「檔案寫出去了」強得多 ——
+    # 它同時驗到 Include 有沒有生效、以及有沒有被更早匹配的設定攔走（ssh 是**先出現的贏**，
+    # 而我們的檔案躺在 config.d 裡，順序不是你翻 ~/.ssh/config 用眼睛看得出來的）。
+    #
+    # 刻意用**不帶 -F 的 `ssh -G`** —— 這正是 git 等一下真的會走的那條路。帶 -F 指到某個
+    # 檔反而會失真：檔案裡的相對 Include 仍然以 ~/.ssh 為基準（跟 -F 指到哪無關），
+    # 兩者會兜不起來。
+    - name: 問 ssh 現在會拿哪把 key 連這個 host
+      ansible.builtin.command:
+        cmd: ssh -G {{ ssh_host }}
+      register: _ssh_resolved
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    # 拆成獨立的 assert（而不是上面那個 task 的 failed_when），只為了失敗時能講人話 ——
+    # command 的 failed_when 失敗會把 ssh -G 那一百多行設定整包吐到畫面上，真正有用的
+    # 那三行反而被埋掉。
+    - name: 驗證解析到的就是我們寫的那把 key
+      ansible.builtin.assert:
+        that: ('identityfile ' ~ _ssh_key_path) in _ssh_resolved.stdout_lines
+        fail_msg: |-
+          設定檔寫好了，但 ssh 解析 {{ ssh_host }} 時沒有用到那把 key。
+
+          預期　{{ _ssh_key_path }}
+          實際　{{ _ssh_resolved.stdout_lines | select('match', '^identityfile ') | join('\n      ') }}
+
+          三個可能：
+            - ~/.ssh/config 檔頭那行 Include 沒生效。最常見的是它被放進了某個 Host 區塊
+              底下 —— Include 出現在 Host 之後就只屬於那個區塊。它必須在第一個 Host 之前。
+            - config.d 底下有另一個檔更早匹配到這個 host（含萬用字元的 Host pattern）。
+              ssh 對每個關鍵字都是**先出現的贏**，不是後蓋前。
+            - 這次執行的 $HOME 跟 passwd 裡的家目錄不是同一個。**ssh 的 `~` 一律取 passwd，
+              不看 $HOME**（實測），所以檔案會被寫到 $HOME 而 ssh 去讀 passwd 那邊。
+              正常在 distro 內自己跑不會遇到；sudo -E／改寫 HOME 的沙箱才會。
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: 讀公鑰（貼到平台用）
+      ansible.builtin.slurp:
+        src: "{{ _ssh_key_path }}.pub"
+      register: _ssh_pub
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: 設定完成
+      ansible.builtin.debug:
+        msg: |-
+          {{ ssh_host }} 的 SSH 設定就緒。
+
+          設定檔　{{ _ssh_dropin }}
+          金鑰　　{{ _ssh_key_path }}{{ '（這次新生成）' if _ssh_keygen.changed | default(false) else '（沿用既有）' }}
+          {% if _ssh_pub.content is defined %}
+
+          公鑰 —— 貼到 {{ ssh_host }} 的 SSH Keys 設定頁：
+
+            {{ _ssh_pub.content | b64decode | trim }}
+          {% endif %}
+
+          驗證（第一次會問 host key 指紋，確認後 yes；刻意不幫你 ssh-keyscan 吞掉）：
+
+            ssh -T git@{{ ssh_host }}
+
+          之後 clone 直接用：git clone git@{{ ssh_host }}:<group>/<repo>.git
+
+          註：commit 的名字／信箱仍是 ~/.gitconfig 那一份全域設定。公司 repo 要用不同身分，
+          用 git 自己的 includeIf（按目錄切換），這個指令不碰 git 身分。

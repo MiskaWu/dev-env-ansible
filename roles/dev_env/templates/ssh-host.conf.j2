@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# 由 `make ssh-host HOST={{ ssh_host }}` 產生（dev-env-ansible）。
+#
+# 一個 host 一個檔，檔名就是 host —— `make ssh-host-rm HOST={{ ssh_host }}` 靠這個對應
+# 找回來。要手改隨你，但下次跑同一個指令會整檔覆蓋回去。
+#
+# IdentitiesOnly yes：只用下面指定的那把。少了它 ssh 會把 agent 裡與預設檔名的 key 全部
+# 輪流送出去，多 key 的機器很容易撞到伺服器的嘗試次數上限（Too many authentication
+# failures）——而且那個錯誤看起來像「金鑰沒設定好」，其實是送太多把。
+Host {{ ssh_host }}
+    User git
+    IdentityFile {{ _ssh_key_path }}
+    IdentitiesOnly yes
