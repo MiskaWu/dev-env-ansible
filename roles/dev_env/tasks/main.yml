@@ -107,3 +107,7 @@
 
 # 註：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。
+#
+# 一個窄的例外：**之後**才多出來的 git 網域（公司內部 GitLab 那類）有 `make ssh-host`，
+# 內容在 tasks/ssh-host.yml、入口是 ssh-host.yml。它不在這個檔裡，因為它吃參數而不是
+# tag —— 界線是時間（開機那一組 vs 日常再加的），不是「SSH 屬於誰」。
