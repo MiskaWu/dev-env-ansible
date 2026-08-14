@@ -68,6 +68,12 @@
   ansible.builtin.import_tasks: lazygit.yml
   tags: [tools, lazygit]
 
+# 不掛 base —— apt 的 git-lfs 自己 Depends: git，前置交給 apt 就夠（理由見檔頭）。
+# 也不需要第二個 task 去跑 `git lfs install`：套件的 postinst 已經寫好 /etc/gitconfig。
+- name: git-lfs
+  ansible.builtin.import_tasks: git-lfs.yml
+  tags: [tools, git-lfs]
+
 - name: Go
   ansible.builtin.import_tasks: go.yml
   tags: [go]
