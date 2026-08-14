@@ -1,0 +1,39 @@
+---
+# git-lfs —— 大檔案（美術資源、xlsx）存到另一套 storage，git 裡只留 130 bytes 的
+# pointer。走 apt，universe 的 3.7.1 跟上游同代。
+#
+# 這是「日常自己會敲的東西」那一類（掛 tools），**不是任何 installer 的相依** ——
+# 沒有一條必經路徑會呼叫它。判準同 CLAUDE.md 裡 jq（升格）與 ripgrep（駁回）那組對照。
+#
+# **不掛 base**：apt 的 git-lfs 自己 `Depends: git, libc6`，前置交給 apt 就夠了；掛上去
+# 只會平白拖 curl + jq 進來。同 node.yml 不掛 base / build-tools 的理由。
+#
+# ---- 為什麼只有一個 task ------------------------------------------------------
+# git-lfs 光有 binary 不會動 —— 還要把 clean/smudge filter 註冊進 gitconfig，否則
+# `.gitattributes` 裡的 `filter=lfs` 完全不生效。**這一步 Ubuntu 的套件已經做了**，
+# 從 3.7.1-1 的 maintainer script 讀出來的（不是猜的）：
+#
+#     postinst:  git lfs install --skip-repo --system    → 寫 /etc/gitconfig
+#     prerm:     git lfs uninstall --skip-repo --system  → 移除時自己清乾淨
+#
+# 寫的是 **system 層**，不碰 `~/.gitconfig` —— 剛好落在這個 role 那條「git 身分不歸我們
+# 管」的正確一側（那條講的是 user.name / user.email，不是「軟體能不能運作」）。
+# 裝完驗一句：`git config --system --get-regexp '^filter\.lfs'`，應該有四行。
+#
+# ---- 沒裝的時候會怎樣（這才是它值得一個 tag 的理由）--------------------------
+# 不是「不能用」，是**靜默做錯事**，而且讀寫兩端都會中：
+#
+#   讀：clone 一個 LFS repo 一路全綠，但每個大檔都是 130 bytes 的 pointer 文字檔，
+#       `git status` 還是乾淨的。要到有人真的去開那份 Excel 才發現。
+#   寫：commit 一個 xlsx 時，`.gitattributes` 說要走 lfs filter，但 filter 沒註冊 ——
+#       git 就**當作根本沒有 filter**，整個檔案原封不動進 git object database。
+#
+# 寫的那端沒有安全網：`filter.lfs.required = true`（filter 執行失敗就硬失敗）是
+# `git lfs install` 寫進 gitconfig 的，沒裝 git-lfs 時那一行不存在，所以 git 沒有
+# 任何理由抱怨。修的成本也不對稱 —— 讀錯了重抓一次就好，寫錯了要改寫 history。
+- name: Install git-lfs
+  become: true
+  ansible.builtin.apt:
+    name: git-lfs
+    update_cache: true
+    cache_valid_time: 3600
