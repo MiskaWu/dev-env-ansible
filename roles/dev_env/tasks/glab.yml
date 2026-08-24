@@ -1,0 +1,24 @@
+---
+# glab —— GitLab 官方 CLI。走 apt（universe 的 1.53.0 跟上游同代），理由同 lazygit：
+# 抓 release tarball 要查版本、對 checksum、自己管升級，而 issue / MR / label 這幾條
+# 指令線多年沒動過，沒有需要跟到最新的理由。
+#
+# 這是「日常自己會敲的東西」，放 tools 這一類；但它跟 lazygit 有一點不同 —— 工作管理
+# 遷到自架 GitLab（2026-08-21）之後，`task` 捕捉腳本與 Claude Code 的 hooks 都靠它把
+# issue 建出來、把留言寫回去，所以少了它是**靜默失敗**：腳本跑完什麼都沒發生。
+# 不過那是別的 repo 的相依，不是這個 role 的 installer 相依，所以仍然不進 base.yml。
+#
+# **認證不在這裡做。** token 是資料不是軟體，同 SSH key 歸 bring-up 的那條界線：
+# 使用者自己到 GitLab 網頁開一把 scope=api 的 Personal Access Token，然後跑
+#
+#     glab auth login --hostname gitlab.dev.baasgames.com
+#
+# 寫進 ~/.config/glab-cli/config.yml。這個 role 不碰那個檔，也不設 GITLAB_HOST ——
+# 機器上同時有 gitlab.com 的 repo（hydrogen/design），一個全域的預設 host 會讓那邊
+# 的指令打錯地方。glab 是看當下 repo 的 remote 決定要連哪台，讓它自己判斷就好。
+- name: Install glab
+  become: true
+  ansible.builtin.apt:
+    name: glab
+    update_cache: true
+    cache_valid_time: 3600

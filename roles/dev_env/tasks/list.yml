@@ -57,6 +57,11 @@
       dep: false
       path: /usr/bin/lazygit
       desc: lazygit（git 的 TUI）
+    - tag: glab
+      dep: false
+      path: /usr/bin/glab
+      desc: >-
+        glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
     - tag: git-lfs
       dep: false
       path: /usr/bin/git-lfs
@@ -106,5 +111,5 @@
 
       移除只支援 tarball / installer 裝的項目（claude / go / python / node）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
-      lazygit / unzip / git-lfs / base / build-tools）要手動，`make uninstall
+      lazygit / glab / unzip / git-lfs / base / build-tools）要手動，`make uninstall
       TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。

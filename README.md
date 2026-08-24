@@ -77,7 +77,7 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
 `~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
-**apt 裝的（`podman` / `lazygit` / `unzip` / `git-lfs` / `base` / `build-tools`）要手動**，指令會擋
+**apt 裝的（`podman` / `lazygit` / `glab` / `unzip` / `git-lfs` / `base` / `build-tools`）要手動**，指令會擋
 下來並告訴你怎麼做。理由不是懶：apt 套件是共同持有的，移除的連帶結果**取決於這台機器
 現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu` 與 `ubuntu-wsl` metapackage 一起帶走。
 同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
@@ -162,6 +162,7 @@ dev-env-ansible/
         ├── claude.yml          # Claude Code（native installer）      (tags: claude)
         ├── unzip.yml           # unzip                        (tags: [tools, unzip])
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
+        ├── glab.yml            # glab（GitLab CLI）            (tags: [tools, glab])
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
@@ -236,6 +237,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · playwright   headless 瀏覽器的系統相依（.so + 中文字型；Playwright 本身與瀏覽器歸專案端）
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
   · lazygit      lazygit（git 的 TUI）
+  · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
   · git-lfs      git-lfs（沒裝不會報錯 —— clone 拿到的是 pointer，commit 會把大檔直接塞進 git）
   · unzip        unzip（不少 release 只出 zip）
 
@@ -245,7 +247,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude git-lfs go lazygit list node playwright podman profile python tools unzip
+    base build-tools claude git-lfs glab go lazygit list node playwright podman profile python tools unzip
 ```
 
 **4. 裝。**
@@ -366,7 +368,7 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `claude.yml`（`~/.local/bin`） | `claude` |
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
 
-apt 裝的（podman、lazygit、unzip、git-lfs、base、build-tools、playwright 的 `.so`）本來
+apt 裝的（podman、lazygit、glab、unzip、git-lfs、base、build-tools、playwright 的 `.so`）本來
 就在 `/usr/bin`，不需要處理。
 
 兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的
