@@ -74,6 +74,12 @@
   ansible.builtin.import_tasks: git-lfs.yml
   tags: [tools, git-lfs]
 
+# 不掛 base —— apt 的 glab 是靜態連結的 Go 二進位，裝的時候什麼都不必先在。
+# 認證（token）不由這個 role 做，理由見 glab.yml 檔頭。
+- name: glab（GitLab CLI）
+  ansible.builtin.import_tasks: glab.yml
+  tags: [tools, glab]
+
 - name: Go
   ansible.builtin.import_tasks: go.yml
   tags: [go]
