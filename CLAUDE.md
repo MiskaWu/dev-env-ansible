@@ -274,7 +274,8 @@
     - 做完之後**這個 role 裝的每一樣東西都在預設 PATH 裡了**，實測 `wsl -d dev -e`
       下 claude / uv / uvx / node / npm / npx / corepack / go / gofmt / podman /
       lazygit / unzip 全部命中。（2026-10-05 加 Rust 後同一個方式實測
-      cargo / rustc / rustdoc / rustfmt / rustup 與 `cargo clippy` / `cargo fmt` 也全部命中。）
+      cargo / rustc / rustdoc / rustfmt / rustup 與 `cargo clippy` / `cargo fmt` 也全部命中；
+      同日加 ffmpeg 後 `ffmpeg` / `ffprobe` 也命中 `/usr/bin`。）
   - **rustup 的 proxy 是 multi-call binary，symlink 之前要驗 argv[0]（2026-10-05）。**
     `~/.cargo/bin` 裡的 cargo / rustc / rustfmt… 全是指向 `rustup` 的相對 symlink
     （1.29.1 實測 `cargo -> rustup`），靠 argv[0] 決定要當誰，所以
@@ -400,6 +401,32 @@
   一併失敗。那是專案升版就解決的事、機器層修不了；真的被迫留在舊版，逃生口是
   `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64`（**必須帶 `-x64`**，整字串替換不補
   arch），而且**只有下載時需要、執行時不用，所以不該寫進 `~/.profile`**。
+- **`TAGS=ffmpeg`（2026-10-05 加）：系統 ffmpeg，走 apt，掛 `[tools, ffmpeg]`。** 為
+  hyaku-monogatari 加的（Playwright 逐格截圖 → ffmpeg 合成 H.264 + AAC 的 MP4 短影片）。
+  形狀跟 glab 一樣：別的 repo 的腳本會呼叫它，但不是這個 role 任何 installer 的相依，所以
+  放 tools、不進 base。查到的東西：
+  - **Playwright 附的 ffmpeg 不能拿來用，不是「多裝一份」。** `~/.cache/ms-playwright/
+    ffmpeg-1011/ffmpeg-linux`（n7.0.1）的 configure 是 `--disable-everything` 再逐項打開，
+    實測 `-encoders` 只有 `png` / `libvpx`（VP8）、`-muxers` 只有 `image2` / `webm`、
+    `-decoders` 只有 `mjpeg` / `libvpx` —— 沒有 H.264、沒有 mp4、沒有任何音訊 encoder，
+    連 PNG 截圖都讀不進來。
+  - **不掛 `playwright`**：Playwright 自己錄影用的是附的那支，`TAGS=playwright` 的機器不需要
+    系統 ffmpeg；需要它的是專案的合成步驟。同 `playwright.yml` 不掛 `node` 的理由。
+  - **走 apt 不抓靜態 build**：Ubuntu 26.04 是 8.0.1（上游已到 9.0.2），但要的 libx264 與內建
+    `aac` 是成熟到不需要追版的東西；靜態 build 要自己追版、對 checksum，還落在預設 PATH 之外。
+  - **Recommends 照預設裝，查過數據才決定的。** `apt-get -s install [--no-install-recommends]
+    ffmpeg` 對照：預設 104 個套件／安裝後 178.8MB／下載 70.5MB，關掉 Recommends 96 個／
+    170.2MB／67.6MB。**ffmpeg 自己沒有 Recommends**，那 96 個全是 libavcodec62 / libsdl2 等的
+    硬 Depends、關不掉；差的 8 個是下游函式庫的 Recommends（libbluray → libaacs0 / libbdplus0、
+    libopenal1 → PipeWire client 一串、libdecor 的 GTK 外掛），跟編碼無關、合計 8.7MB。
+    libx264-165 是 libavcodec62 的**硬 Depends**、`aac` 是內建 encoder，兩種裝法都編得出
+    H.264 + AAC —— 所以這是純體積取捨，省 5% 不值得造出 repo 裡第一個帶
+    `install_recommends: false` 的 apt task。**別把「ffmpeg recommends 很多」當前提**，
+    看起來很多的那堆是 Depends。
+  - **實測（本機套用）**：`make install TAGS=ffmpeg` → changed=1，dpkg.log 正好 104 個套件
+    （跟模擬一致），重跑 changed=0；`ffmpeg -encoders` 有 `libx264` 與 `aac`；
+    `testsrc=1080x1920:rate=30` + `sine` 編 2 秒 → ffprobe 看到 h264（High、yuv420p）與
+    aac（LC）兩個串流、容器 mp4。apt 裝在 `/usr/bin`，不必 symlink、不碰 `profile.yml`。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：

@@ -1,0 +1,44 @@
+---
+# ffmpeg —— 影片轉碼／合成。走 apt（universe 的 8.0.1；上游已到 9.0.x，但這裡要的
+# libx264 與內建 aac 是十幾年沒變過形狀的東西，沒有需要跟到最新的理由，同 lazygit / glab）。
+# 刻意不抓靜態 build：那要查版本、對 checksum、自己管升級，而且會落在預設 PATH 之外。
+#
+# 為 hyaku-monogatari 加的（2026-10-05）：Playwright 逐格截圖 → ffmpeg 合成 MP4 短影片
+# （H.264 + AAC，給 X、YouTube Shorts 那類平台）。它是「專案腳本會敲的東西」，跟 glab
+# 被 `task` 腳本呼叫是同一類 —— 別的 repo 的相依、不是這個 role 的 installer 相依，所以
+# 放 tools，不進 base.yml。
+#
+# ---- Playwright 不是已經附了一支嗎？——那支只有 VP8／WebM ---------------------
+# `~/.cache/ms-playwright/ffmpeg-<build>/ffmpeg-linux` 是 Playwright 錄影專用的閹割版，
+# configure 是 `--disable-everything` 再逐項打開。build 1011（n7.0.1）實測：
+#
+#     -encoders   png、libvpx（VP8）            ← 沒有 H.264，也沒有任何音訊 encoder
+#     -muxers     image2、webm                  ← 沒有 mp4
+#     -decoders   mjpeg、libvpx                 ← 連 PNG 截圖都讀不進來
+#
+# 所以合成 MP4 只能用系統的。**也因此不掛 `playwright`**：Playwright 自己錄影用的是它附的
+# 那支，用不到系統 ffmpeg；需要它的是專案的合成步驟。掛上去只會讓單純要跑 e2e 的機器平白
+# 多 170MB（同 playwright.yml 不掛 node 的理由）。
+#
+# ---- 不加 install_recommends: false，理由是數據 --------------------------------
+# 2026-10-05 在 Ubuntu 26.04 用 `apt-get -s install [--no-install-recommends] ffmpeg` 比較
+# （大小是各套件 Installed-Size / Size 加總）：
+#
+#     預設（含 Recommends）   104 個套件   安裝後 178.8MB   下載 70.5MB
+#     --no-install-recommends   96 個套件   安裝後 170.2MB   下載 67.6MB
+#
+# **ffmpeg 自己沒有任何 Recommends** —— 那 96 個全是 libavcodec62 / libavdevice62 /
+# libsdl2 等的硬 Depends，關掉 Recommends 拿不掉。差的 8 個是更下游函式庫的 Recommends：
+# libbluray 帶的 libaacs0 / libbdplus0（藍光解密）、libopenal1 帶的 PipeWire client
+# （libpipewire-0.3-0t64 / -common、libspa-0.2-modules 與它的 libfftw3-single3、
+# libwebrtc-audio-processing-1-3）、libdecor 的 GTK 外觀外掛。全部跟編碼無關，合計 8.7MB。
+#
+# 兩邊都編得出 H.264 + AAC（libx264-165 是 libavcodec62 的硬 Depends，aac 是 ffmpeg
+# 內建 encoder），所以這是純粹的體積取捨：省 5%、換來整個 repo 第一個「只有這個 apt task
+# 長得不一樣」的特例。不划算 —— 維持跟其他 apt 小工具同形狀。
+- name: Install ffmpeg
+  become: true
+  ansible.builtin.apt:
+    name: ffmpeg
+    update_cache: true
+    cache_valid_time: 3600
