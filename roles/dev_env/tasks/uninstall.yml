@@ -16,8 +16,8 @@
 #      也不該有人能靠少打幾個字得到它。
 #
 #   2. **只碰 role 獨佔的路徑**（/usr/local/go、/usr/local/node、~/.local/share/claude、
-#      ~/.local/bin/uv…）。這些整包是我們放的，刪掉不牽動任何別的東西 —— 這正是它們
-#      能自動化、而 apt 套件不能的原因。
+#      ~/.local/bin/uv、~/.rustup…）。這些整包是我們放的，刪掉不牽動任何別的東西 —— 這正是
+#      它們能自動化、而 apt 套件不能的原因。
 #
 #   3. **工具與資料分開**：預設只移除工具本身，快取／模組／已下載的 runtime 留著並報告
 #      大小；要一起清得明確加 `DATA=1`。理由是那些目錄常常裝著你自己的東西
@@ -191,6 +191,107 @@
             what: uv 裝的 Python runtime 與 uv tool 安裝的工具
           - path: "{{ ansible_facts.env.HOME }}/.cache/uv"
             what: uv 的 wheel / 下載快取
+
+# ---- Rust（rustup）-----------------------------------------------------------
+# rustup 放了兩個目錄，但所有權不一樣，所以處置也不一樣：
+#
+#   ~/.rustup  整包是 rustup 的（工具鏈本體、settings.toml、下載暫存）→ **工具**，直接刪。
+#              它對應的是 /usr/local/go：role 裝的 stable 工具鏈就在這裡面，不是「之後才
+#              長出來的資料」。其他由 rust-toolchain.toml 自動抓的版本也在這棵樹，但沒有
+#              rustup 就沒有任何東西會讀它們，留著只是孤兒（再裝回來時 rustup 會照需要重抓）。
+#   ~/.cargo   **混住**：rustup 本體與 proxy（bin/ 裡）＋ cargo 自己的快取 ＋ 你 `cargo install`
+#              的東西 ＋ 你的 config.toml / credentials.toml。跟 ~/go 同一種「一棵樹裡混著
+#              工具與你的東西」，差別在這棵樹**切得開**（Cargo Book 的 Cargo Home 一節逐項
+#              寫了每個路徑是什麼），所以只拿掉 rustup 放的，其餘照 DATA 的規則走。
+#
+# **刻意不用 `rustup self uninstall`**：它會把整個 ~/.cargo 連同 config.toml、credentials.toml、
+# cargo install 裝的東西一起刪 —— 那正是「工具與資料是兩個決定」要避免的一個字全砍。
+- name: Rust（rustup）
+  tags: [rust]
+  block:
+    # rustup 在 ~/.cargo/bin 放的是「本體 + 一排解析回本體的 proxy」：1.29.1 實測是相對
+    # symlink（`cargo -> rustup`），舊版是 hardlink。`find -L … -samefile` 兩種都認得 ——
+    # -L 讓 symlink 解析到目標再比對。**不手抄 proxy 名單**：那是上游的清單（現在 13 個，
+    # 含 rls / rust-gdbgui 這種沒人記得的），抄過來就會漂移，而漏掉的會變成 dangling symlink。
+    # 用 find 認「是不是 rustup」，`cargo install` 裝的東西自然不會被選中。
+    #
+    # failed_when: false —— rustup 已經不在時 find 會因為 -samefile 的參照不存在而回非零，
+    # 那等於「沒有要刪的」，不是錯誤（stdout 空、下一步 loop 零次）。
+    - name: 找出 rustup 本體與它的 proxy（~/.cargo/bin 裡解析回 rustup 的那些）
+      ansible.builtin.command:
+        argv:
+          - find
+          - -L
+          - "{{ ansible_facts.env.HOME }}/.cargo/bin"
+          - -maxdepth
+          - "1"
+          - -samefile
+          - "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+      register: _rustup_owned
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: 移除 rustup 與它的 proxy
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ _rustup_owned.stdout_lines }}"
+
+    # env 是 rustup 寫的 PATH 腳本（我們用 --no-modify-path，沒有人 source 它）。這台實測
+    # 只有 env；有 fish / nushell 的機器 rustup 還會多寫 env.fish / env.nu，一起列著。
+    - name: 移除 ~/.rustup（工具鏈本體）與 rustup 寫的 env 腳本
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ansible_facts.env.HOME }}/.rustup"
+        - "{{ ansible_facts.env.HOME }}/.cargo/env"
+        - "{{ ansible_facts.env.HOME }}/.cargo/env.fish"
+        - "{{ ansible_facts.env.HOME }}/.cargo/env.nu"
+
+    # 同 claude / go / node / uv：不刪就留下 dangling symlink（`command -v cargo` 仍然命中、
+    # 一跑才爆）。清單跟 rust.yml 那五個一致 —— 這份是**我們自己建的**，不是上游的。
+    - name: 移除 Rust 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: "/usr/local/bin/{{ item }}"
+        state: absent
+      loop: [cargo, rustc, rustdoc, rustfmt, rustup]
+
+    # 分類照 Cargo Book「Cargo Home」一節，語意對齊 Go：
+    #   - registry/、git/ 是純快取 = Go 的 pkg/mod 與 go-build；
+    #   - bin/（proxy 已經移掉了，剩下的都是 `cargo install` 的）與它的安裝紀錄
+    #     .crates.toml / .crates2.json = Go 的 ~/go/bin、uv 的 `uv tool` —— 那兩邊 DATA=1
+    #     都會一起清，這裡也一樣；
+    #   - config.toml / credentials.toml 是**你的設定與 token** = ~/.claude 那一類，
+    #     DATA=1 也不動。所以 ~/.cargo 這個目錄本身永遠不刪。
+    # DATA=1 之後 ~/.cargo 裡還會剩 cargo 自己的帳本：.global-cache（快取使用時間的 SQLite，
+    # 實測 56KB）與 .package-cache / .package-cache-mutate（0 byte 鎖檔）。刻意不列 ——
+    # 它們小到不值得、少了 cargo 會自己重建，而 cargo 的內部檔名會隨版本變，逐一點名就是
+    # 一份會漂移的抄本。只列 Cargo Book 寫明用途、而且真的佔空間的那些。
+    - name: Rust —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['rust'] }}"
+        _uninstall_data: "{{ _uninstall_data + _rust_data }}"
+        _uninstall_keep: "{{ _uninstall_keep + _rust_keep }}"
+      vars:
+        _rust_data:
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/registry"
+            what: crates.io 的下載快取與解開的原始碼（純快取，刪了只是下次 build 重抓）
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/git"
+            what: git 相依的快取（純快取）
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/bin"
+            what: cargo install 裝的二進位（rustup 的 proxy 已經移掉，剩下的都是你自己裝的）
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/.crates.toml"
+            what: cargo install 的安裝紀錄（跟 bin/ 是一組）
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/.crates2.json"
+            what: cargo install 的安裝紀錄（跟 bin/ 是一組）
+        _rust_keep:
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/config.toml"
+            what: 你的 cargo 設定 —— DATA=1 也不會動
+          - path: "{{ ansible_facts.env.HOME }}/.cargo/credentials.toml"
+            what: registry 的 token —— DATA=1 也不會動
 
 # ---- 資料目錄的統一處置 ------------------------------------------------------
 # 到這裡工具已經移除完畢。剩下的是「資料」：預設只報告，DATA=1 才真的刪。

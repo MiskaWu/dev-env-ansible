@@ -18,8 +18,8 @@ make uninstall TAGS=go        # 移除一項（必須點名，不帶 TAGS 會被
 
 **相依會自動帶進來，你不必知道誰需要誰。** `TAGS=python` 會順便裝 `build-essential`
 （uv 遇到沒有預編譯 wheel 時要現場編 C extension）與 `curl` / `ca-certificates`
-（installer 要）；`TAGS=claude` 會帶 `curl` / `jq`；任何會影響 PATH 的項目都會順手更新
-`~/.profile`。
+（installer 要）；`TAGS=rust` 也帶這兩組（rustc 連結任何程式都拿 `cc` 當 linker）；
+`TAGS=claude` 會帶 `curl` / `jq`；任何會影響 PATH 的項目都會順手更新 `~/.profile`。
 
 （git 身分與**開機那組** SSH keys 不在這裡 —— 由 [`wsl-bootstrap`](../wsl-bootstrap) 在
 bring-up 就備好，因為 key 得先在才能 clone 私有 repo，屬「一台個人機」而非軟體層。
@@ -47,9 +47,9 @@ make check   TAGS=podman        # 乾跑預覽同一件事
 **刻意沒有隱藏的預設值**。要只裝 Claude 就明確寫 `TAGS=claude`。
 
 **相依用 tag 表達，不是布林運算式。** `base.yml` 在 `main.yml` 掛
-`[base, claude, python]`、`build-tools.yml` 掛 `[build-tools, go, python]`，於是
-`--tags python` 自動把兩者都帶進來。將來多一個需要編譯器的東西，只要在它的 import 多掛
-一個 tag。
+`[base, claude, python, rust]`、`build-tools.yml` 掛 `[build-tools, go, python, rust]`，於是
+`--tags python` 自動把兩者都帶進來。多一個需要編譯器的東西只要在它的 import 多掛一個 tag
+—— Rust 加進來時就是這樣，沒有改任何運算式。
 
 一起消失的三個坑：相依關係不必再寫成布林運算式；`-e install_go=false` 傳字串 `"false"`
 進 Jinja 被當 truthy 那類 `| bool` 陷阱沒有了；「單跑一個 tag 不會帶到 `profile`」也不再
@@ -73,9 +73,9 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **必須點名要移除什麼。** 這是跟 `install` 最重要的不對稱：`make install` 不帶 `TAGS`
 是「全裝」，`make uninstall` 不帶 `TAGS` 是**拒絕**。沒有人該靠少打幾個字就把機器清空。
 
-**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node`）。分界線是
+**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node` / `rust`）。分界線是
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
-`~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
+`~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
 **apt 裝的（`podman` / `lazygit` / `glab` / `unzip` / `git-lfs` / `base` / `build-tools`）要手動**，指令會擋
 下來並告訴你怎麼做。理由不是懶：apt 套件是共同持有的，移除的連帶結果**取決於這台機器
@@ -91,6 +91,13 @@ sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行
 大小，要一起清才加 `DATA=1`。因為那些目錄常混著你自己的東西 —— 最典型是 `~/go`，
 `go install` 裝的二進位（`bin/`）跟模組快取（`pkg/mod`）在同一棵樹底下。
 **`~/.claude` 是例外中的例外**：設定、專案紀錄、hooks、memory 都在那裡，`DATA=1` 也不動。
+
+**Rust 的 `~/.cargo` 是混住的，所以拆開處理。** `~/.rustup`（工具鏈本體）整包是 rustup 的，
+直接刪；`~/.cargo` 裡則同時有 rustup 本體與它的 proxy、cargo 的下載快取、你 `cargo install`
+的東西、你的 `config.toml` / `credentials.toml`。預設只拿掉 rustup 放的那些；`DATA=1` 再清
+`registry/`、`git/` 兩個快取與 `cargo install` 的二進位（跟 Go 的 `~/go/bin`、uv 的
+`uv tool` 同一個待遇）；`config.toml` / `credentials.toml` 跟 `~/.claude` 一樣永遠保留。
+所以**不用 `rustup self uninstall`** —— 它會把整個 `~/.cargo` 連設定與 token 一起刪掉。
 
 **沒有對稱的 `uninstall-check`，這是刻意的。** ansible 的 `--check` 對移除給的是**假的
 安全感**：它只會說「這個 task 會 changed」，不會說 purge 某個套件會連帶帶走誰 —— 那個
@@ -157,8 +164,8 @@ dev-env-ansible/
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
-        ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, python])
-        ├── build-tools.yml     # build-essential      (tags: [build-tools, go, python])
+        ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, python, rust])
+        ├── build-tools.yml     # build-essential   (tags: [build-tools, go, python, rust])
         ├── claude.yml          # Claude Code（native installer）      (tags: claude)
         ├── unzip.yml           # unzip                        (tags: [tools, unzip])
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
@@ -166,11 +173,14 @@ dev-env-ansible/
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
+        ├── node.yml            # Node 官方 tarball → /usr/local/node   (tags: node)
+        ├── rust.yml            # rustup → stable + rustfmt / clippy    (tags: rust)
+        ├── playwright.yml      # headless 瀏覽器的 .so + 中文字型    (tags: playwright)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
         ├── uninstall.yml       # 反安裝：只碰 role 獨佔的路徑   (由 uninstall.yml 進入)
         ├── ssh-host.yml        # ~/.ssh/config.d 的 drop-in      (由 ssh-host.yml 進入)
         └── profile.yml         # ~/.profile 單一 managed block
-                                #      (tags: [profile, claude, go, python, podman])
+                                #  (tags: [profile, claude, go, python, node, rust, podman])
 ```
 
 **`ssh-host` 也是獨立 playbook，但理由跟 uninstall 不同：它吃參數。** site.yml 那邊每個
@@ -186,9 +196,12 @@ go」沒辦法用 tag 組合表達。拆成兩個 playbook 之後，`--tags go` 
 所以 `make uninstall TAGS=podman` 認得出那是「apt 裝的、要手動」而不是「打錯字」）。
 
 **相依關係就寫在 `main.yml` 的 tag 上。** 前兩個是相依層 —— `base.yml` 掛
-`[base, claude, python]`（那兩個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
-`[build-tools, go, python]`。所以 `--tags python` 會自動把兩者都帶進來。`go.yml` 沒掛
-`base` 是因為它走 ansible 的 `get_url`，不呼叫 `curl` 二進位。
+`[base, claude, python, rust]`（那三個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
+`[build-tools, go, python, rust]`。所以 `--tags python` 會自動把兩者都帶進來。`go.yml` 沒掛
+`base` 是因為它走 ansible 的 `get_url`，不呼叫 `curl` 二進位。`rust` 掛 `build-tools` 的
+理由比另外兩個硬：Go / uv 是「碰到 cgo / C extension 才要」，rustc 是**連 hello world 都要**
+—— 它連結時拿 `cc` 當 linker driver，PATH 裡沒有 cc 就是「error: linker `cc` not found」
+（實驗與原始碼證據見 CLAUDE.md）。
 
 **一個項目一個 task 檔，apt 小工具也不例外。** 多裝一個工具就是開一個 `<工具>.yml`，
 在 `main.yml` 掛 `tags: [tools, <工具>]` —— 於是 `TAGS=lazygit` 只裝那一個、`TAGS=tools`
@@ -234,6 +247,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
   · python       uv（自己也管 Python 版本，所以不需要 pyenv）
   · node         Node.js 24.18.0 LTS + npm（官方 tarball，不需要 nvm）
+  · rust         Rust stable + rustfmt / clippy（官方 rustup；專案版本由 rust-toolchain.toml 管）
   · playwright   headless 瀏覽器的系統相依（.so + 中文字型；Playwright 本身與瀏覽器歸專案端）
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
   · lazygit      lazygit（git 的 TUI）
@@ -243,11 +257,11 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 
 相依層 —— 上面的項目會自動帶進來，很少需要自己點：
 
-  · base         claude / uv 的 installer 相依（清單見 base.yml）
-  · build-tools  build-essential —— Go cgo / uv C extension 的前置
+  · base         claude / uv / rustup 的 installer 相依（清單見 base.yml）
+  · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude git-lfs glab go lazygit list node playwright podman profile python tools unzip
+    base build-tools claude git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
 
 **4. 裝。**
@@ -330,8 +344,19 @@ session 一來 socket 自動起、`DOCKER_HOST` 指得到的東西就活了。�
 | **Go** | 語言內建。Go 1.21+ 預設 `GOTOOLCHAIN=auto`，`go.mod` 要求更新的版本時 `go` 指令自動下載並改用對應 toolchain | 只裝一個 bootstrap Go |
 | **Python** | `uv` 自己管：`uv python install`、讀 `.python-version`、`uv run` 會自動抓缺的版本（預編譯 standalone build，不用現場編譯） | 裝 uv |
 | **Node** | 不切。裝一個 LTS，版本 pin 在 `node_version` | 官方 tarball → `/usr/local/node` |
+| **Rust** | rustup 自己管：專案根目錄放 `rust-toolchain.toml`，rustup 讀到就自動抓那個版本（`auto-install` 預設開） | 裝 rustup + 一個 stable |
 
-Node 是三者中唯一沒有內建解法的，但**它也不需要版本管理器**，因為前端專案宣告的幾乎都是
+**rustup 本身就是工具鏈管理器，這不違反「不裝版本管理器」。** 那條擋的是 mise / asdf 這種
+跨語言、外掛式的東西；rustup 是 Rust 官方唯一的發行管道，跟 uv 之於 Python 同一個位置。
+它也過得了「非互動 shell 拿不拿得到」那關（proxy 是真實路徑上的檔案，不是 shell function）。
+Rust 沒有 `rust_version` 這種變數：機器層永遠是 **stable**，而且每次跑到 `rust` 這個 tag
+都會跟著上游走版（同 `go_version: latest`）；要 pin 就是專案的 `rust-toolchain.toml`。
+注意它裝的是 **minimal profile + rustfmt + clippy**（＝default 拿掉 737MB 的離線文件
+rust-docs），這個 profile 會記在 `~/.rustup/settings.toml`，所以 `rust-toolchain.toml`
+自動抓的版本也只有 minimal —— 專案要 fmt / clippy 就在那份檔裡列
+`components = ["rustfmt", "clippy"]`（CI 本來也需要）。
+
+Node 是四者中唯一沒有內建解法的，但**它也不需要版本管理器**，因為前端專案宣告的幾乎都是
 **地板**而不是 pin（例：vite 8 要 `^20.19 || >=22.12`）—— 一個 active LTS 就蓋過去了。
 真的出現硬衝突（A 要 20、B 要 26）時，隔離該待在**專案層**（那個專案自己的 devcontainer，
 podman 已經裝好了），不是機器層。為了一個還不存在的衝突先在機器上疊一層抽象，代價比收益大。
@@ -367,6 +392,7 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `go.yml`（`/usr/local/go/bin`） | `go` `gofmt` |
 | `claude.yml`（`~/.local/bin`） | `claude` |
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
+| `rust.yml`（`~/.cargo/bin`） | `cargo` `rustc` `rustdoc` `rustfmt` `rustup` |
 
 apt 裝的（podman、lazygit、glab、unzip、git-lfs、base、build-tools、playwright 的 `.so`）本來
 就在 `/usr/bin`，不需要處理。
@@ -376,7 +402,13 @@ apt 裝的（podman、lazygit、glab、unzip、git-lfs、base、build-tools、pl
 被 symlink 到）。要驗就實跑 `wsl -d dev -e bash -c 'command -v <cmd>'` —— 用互動 shell
 驗一定是綠的，驗不出東西。
 
-`claude` / `uv` 那兩列有個 go / node 沒有的但書：目標在 `$HOME` 底下，所以這支 root
+`rust` 那列要多驗一件事：rustup 的 cargo / rustc / rustfmt… 都是指向**同一支** `rustup`
+的 symlink，靠 argv[0] 決定要當誰，所以 `/usr/local/bin/cargo` 是兩段鏈。實測經由 symlink
+執行時分流照樣正確；`cargo clippy` / `cargo fmt` 不必另外連（cargo 本來就會在
+`~/.cargo/bin` 找子命令），在只有 `/usr/bin:/bin:/usr/local/bin` 的 `env -i` 與
+`wsl -d dev -e` 下都實測通過。
+
+`claude` / `uv` / `rust` 那三列有個 go / node 沒有的但書：目標在 `$HOME` 底下，所以這支 root
 擁有的 symlink 綁死了一個使用者。這個 role 本來就是「一台機器供一個開發者」的模型
 （`~/.profile`、`~/.claude`、rootless podman 都只服務一個 uid），所以可以這樣做；同機
 真的要跑第二個使用者時要知道那會是後寫的贏，細節見 CLAUDE.md。

@@ -35,6 +35,11 @@ go_version: latest
 # 它們是 shell function，非互動 shell 拿不到 node，詳見 node.yml 檔頭。
 node_version: "24.18.0"
 
+# 註：Rust **沒有**對應的版本變數，這是刻意的。機器層永遠是 stable channel，而且 rust.yml
+# 每次跑都會 `rustup toolchain install stable` 跟著上游走版（等於 go_version 的 latest）。
+# 專案要 pin 就放一份 rust-toolchain.toml，rustup 讀到會自動抓那個版本 —— 跟 GOTOOLCHAIN=auto
+# 同一個角色，機器層不需要第二個開關。
+
 # netavark 的 firewall driver —— **一律明寫，不吃發行版預設**。
 #
 # 為什麼不吃預設：netavark 的預設是「編譯期」決定的（上游 src/firewall/mod.rs 用

@@ -12,8 +12,8 @@
 # 任何地方記著「這台有 Go」。偵測讓兩次都產出正確的 .profile。
 #
 # 順序上安全：main.yml 把 profile.yml 放最後，所以同一次 run 裡 go.yml 已經裝完才輪到
-# 這裡 stat。而 profile 的 tag 掛在 [claude, go, python, podman] 上，只要裝了會影響 PATH
-# 的東西就一定會跟著跑（舊設計要自己記得 `TAGS=go,profile`，那個坑消失了）。
+# 這裡 stat。而 profile 的 tag 掛在 [claude, go, python, node, rust, podman] 上，只要裝了
+# 會影響 PATH 的東西就一定會跟著跑（舊設計要自己記得 `TAGS=go,profile`，那個坑消失了）。
 #
 # check mode 的已知落差：`--check` 不會真的裝 Go，所以在還沒有 Go 的機器上乾跑，diff
 # 會顯示成「不含 Go PATH」。那是 check mode 的本質（後面的 task 看不到前面沒真的做的
@@ -33,6 +33,14 @@
   register: _node_bin
   check_mode: false
 
+# 看 rustup 本體，不看 cargo：兩者是同一步放下去的（cargo 是 rustup 的 hardlink），
+# 而 rustup 是 installer 的 `creates` 與 list.yml 用的同一個路徑 —— 一個項目一個偵測點。
+- name: 偵測 Rust 是否已裝（決定 .profile 要不要寫 ~/.cargo/bin 的 PATH）
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+  register: _rust_bin
+  check_mode: false
+
 - name: 偵測 podman 是否已裝（決定 .profile 要不要寫 DOCKER_HOST）
   ansible.builtin.stat:
     path: /usr/bin/podman
@@ -43,6 +51,11 @@
 # 的人有意義的話；講 ansible 寫法的說明放這裡（外面）。例如 Go 那兩段之所以用行內
 # {% raw %}{% if %}{% endraw %} 夾在同一行 export 裡而不是拆成兩行 export：拆開的話
 # Go 路徑會跑到 $HOME/.local/bin 前面，「自己裝的照這個順序排」就守不住了。
+#
+# ~/.cargo/bin 也走同一行，**不用 rustup 自己的 `. "$HOME/.cargo/env"`**：那支 env 腳本
+# 做的事就只是把這個目錄加進 PATH，多 source 一個檔只是讓 PATH 的來源分散到兩處
+# （rust.yml 用 --no-modify-path 擋掉了 rustup 自己去改 .profile / .bashrc）。
+# 它管的是 `cargo install` 裝出來的東西 —— rustup 的入口另外有 /usr/local/bin 的 symlink。
 - name: ~/.profile — dev_env managed block
   ansible.builtin.blockinfile:
     path: "{{ ansible_facts.env.HOME }}/.profile"
@@ -54,7 +67,7 @@
       # （/mnt/c/...）。沒有這層保證的話，像 npm 這種 Windows 也有的指令會解析到
       # Windows 版，在 WSL 裡裝出 Windows 的原生模組 —— 這不是假想，2026-07-28 在
       # 一個前端專案上實際發生過（node_modules 整包變成 *-win32-x64-msvc）。
-      export PATH="$HOME/.local/bin:{% if _go_bin.stat.exists %}/usr/local/go/bin:$HOME/go/bin:{% endif %}{% if _node_bin.stat.exists %}/usr/local/node/bin:{% endif %}$PATH"
+      export PATH="$HOME/.local/bin:{% if _go_bin.stat.exists %}/usr/local/go/bin:$HOME/go/bin:{% endif %}{% if _node_bin.stat.exists %}/usr/local/node/bin:{% endif %}{% if _rust_bin.stat.exists %}$HOME/.cargo/bin:{% endif %}$PATH"
       {% if _go_bin.stat.exists %}
       # Go 1.21+ 的內建版本切換：go.mod 要求更新的版本時自動下載對應 toolchain。
       # auto 本來就是預設值，明寫是為了讓「不需要 Go 版本管理器」這件事有據可查，
@@ -81,9 +94,10 @@
     - 'export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"'
     - 'export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"'
 
-# 這行要另外處理，因為它是唯一會跟 block 撞的：Go 與 Node 都沒有的機器上，block 的
+# 這行要另外處理，因為它是唯一會跟 block 撞的：Go / Node / Rust 都沒有的機器上，block 的
 # PATH 行就退化成一模一樣的 `export PATH="$HOME/.local/bin:$PATH"`。只要其中一個在，
-# block 那行就夾著別的路徑、文字不同，清起來才安全。
+# block 那行就夾著別的路徑、文字不同，清起來才安全。**往 PATH 那行加項目時這裡也要加**
+# （Node、Rust 加進來時各補過一次）。
 # 跳過的代價只是 .profile 裡多一行重複的 .local/bin（Ubuntu 內建的 .profile 本來就
 # 也加了一次），PATH 語意不受影響 —— 比每次 install 都 changed 好。
 - name: ~/.profile — 清掉舊版的 .local/bin export（僅在不會誤刪 block 內容時）
@@ -91,4 +105,4 @@
     path: "{{ ansible_facts.env.HOME }}/.profile"
     line: 'export PATH="$HOME/.local/bin:$PATH"'
     state: absent
-  when: _go_bin.stat.exists or _node_bin.stat.exists
+  when: _go_bin.stat.exists or _node_bin.stat.exists or _rust_bin.stat.exists

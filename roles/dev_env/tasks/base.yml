@@ -1,10 +1,12 @@
 ---
-# 基礎 apt 套件 —— **這是別人的相依，不是「基本必裝」**。它掛在 `[base, claude, python]`
-# 底下（見 main.yml），所以 `make install TAGS=claude` 會自動把它帶進來，跟 build-tools
-# 被 go / python 帶進來是完全一樣的手法。
+# 基礎 apt 套件 —— **這是別人的相依，不是「基本必裝」**。它掛在 `[base, claude, python,
+# rust]` 底下（見 main.yml），所以 `make install TAGS=claude` 會自動把它帶進來，跟
+# build-tools 被 go / python / rust 帶進來是完全一樣的手法。
 #
-# 為什麼是這三個 tag：`claude.yml` 與 `python.yml` 都是 `curl … | sh` 跑官方 installer，
-# 兩者都要 `curl` + `ca-certificates`；`jq` 只有 Claude 的 installer 用得到（見下）。
+# 為什麼是這四個 tag：`claude.yml`、`python.yml`、`rust.yml` 都是 `curl … | sh` 跑官方
+# installer，三者都要 `curl` + `ca-certificates`；`jq` 只有 Claude 的 installer 用得到（見下）。
+# rustup 那條的證據：task 本身就是 `curl … https://sh.rustup.rs | sh`，而 rustup-init.sh 的
+# `downloader()` 也是先找 curl（沒有才退 wget）去抓真正的 rustup-init 二進位。
 # `go.yml` 走 ansible 的 `get_url`（Python 端發 HTTPS，不呼叫 curl 二進位），所以沒掛 go。
 #
 # 判準是「某個 installer 的必經路徑上真的用得到什麼」，不是「什麼好用」。四個就到頂了 ——
@@ -38,7 +40,7 @@
   ansible.builtin.apt:
     name:
       - ca-certificates    # CA 根憑證庫；curl / git 走 HTTPS 驗對方憑證用
-      - curl               # Claude Code 與 uv 的官方 installer 都靠它
+      - curl               # Claude Code / uv / rustup 的官方 installer 都靠它
       - git                # 取得這個 repo 與之後 git pull 更新（bring-up 已給，這裡是保險）
       - jq                 # Claude installer 解 manifest checksum 的首選路徑（見上方註解）
     update_cache: true

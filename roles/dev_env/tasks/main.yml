@@ -9,10 +9,11 @@
 # ---- 相依關係用 tag 表達 -----------------------------------------------------
 # 一個 task 檔要成為某個目標的前置，就把那個目標的 tag 也掛上去。兩個現役例子：
 #
-#   base.yml        [base, claude, python]     ← claude / uv 的 installer 要 curl、jq
-#   build-tools.yml [build-tools, go, python]  ← Go 的 cgo、uv 的 C extension 要編譯器
+#   base.yml        [base, claude, python, rust]     ← claude / uv / rustup 的 installer 要 curl
+#   build-tools.yml [build-tools, go, python, rust]  ← Go 的 cgo、uv 的 C extension、rustc 的
+#                                                       linker（cc）要編譯工具鏈
 #
-# 於是 `--tags claude` 自動帶 base、`--tags python` 自動帶 base + build-tools。
+# 於是 `--tags claude` 自動帶 base、`--tags python` / `--tags rust` 自動帶 base + build-tools。
 # 實測（--list-tasks）確認過。比布林運算式好在：多一個消費者只要多掛一個 tag，不必回頭
 # 改 `install_build_tools: "{{ install_go or install_python }}"` 那種式子；也不會再有
 # `-e install_go=false` 傳字串 "false" 進 Jinja 被當成 truthy 的那類坑。
@@ -35,13 +36,15 @@
 
 # ---- 相依層：不會單獨去點，靠上面的 tag 被帶進來 -----------------------------
 # 也可以單獨要（`make install TAGS=base` / `TAGS=build-tools`），偶爾有用。
-- name: 基礎套件（claude / uv 的 installer 相依）
+- name: 基礎套件（claude / uv / rustup 的 installer 相依）
   ansible.builtin.import_tasks: base.yml
-  tags: [base, claude, python]
+  tags: [base, claude, python, rust]
 
-- name: 編譯工具鏈（Go cgo / uv C extension 的前置）
+# rust 掛在這裡不是「可能會編 C」：rustc 連結任何程式都拿 cc 當 linker driver，
+# 連 hello world 都要（證據見 rust.yml 檔頭與 CLAUDE.md）。
+- name: 編譯工具鏈（Go cgo / uv C extension / rustc linker 的前置）
   ansible.builtin.import_tasks: build-tools.yml
-  tags: [build-tools, go, python]
+  tags: [build-tools, go, python, rust]
 
 # ---- 可安裝的項目 -------------------------------------------------------------
 - name: Claude Code
@@ -94,6 +97,12 @@
   ansible.builtin.import_tasks: node.yml
   tags: [node]
 
+# 官方 rustup 裝 stable（minimal profile + rustfmt + clippy），理由見 rust.yml 檔頭。
+# 相依掛在上面的 base（installer 要 curl）與 build-tools（rustc 要 cc 當 linker）。
+- name: Rust（rustup）
+  ansible.builtin.import_tasks: rust.yml
+  tags: [rust]
+
 # 只給「chromium 起得來、畫得出中文」這個 OS 層能力，**不裝 Playwright 本身、也不下載
 # 瀏覽器** —— 那兩層綁專案的版本、又不需要 root，歸專案端（理由見 playwright.yml 檔頭）。
 #
@@ -115,7 +124,7 @@
 # `make facts` 從唯讀變成會改 ~/.profile。
 - name: ~/.profile 環境設定
   ansible.builtin.import_tasks: profile.yml
-  tags: [profile, claude, go, python, node, podman]
+  tags: [profile, claude, go, python, node, rust, podman]
 
 # 註：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。
