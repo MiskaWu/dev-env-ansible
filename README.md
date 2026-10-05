@@ -242,9 +242,9 @@ gh 是 GitHub 官方的工具，也是一個伺服器端會淘汰 API 的客戶�
 金鑰輪替怎麼處理，見 `gh.yml` 檔頭。
 
 **這個 role 只裝 gh，不做認證** —— 跟 glab 同一個立場：token 是資料不是軟體，不歸這裡管，
-存 token 的 `~/.config/gh/hosts.yml` 也不碰。唯一的例外是用 `gh config set telemetry disabled`
-**關掉 gh 預設開啟的 telemetry**（寫進 `config.yml`；不用環境變數，是因為非登入 shell 讀不到
-`~/.profile`）。自己開一把 fine-grained token（查 Actions 結果只需要 Actions 唯讀），
+存 token 的 `~/.config/gh/hosts.yml` 也不碰。唯一的例外是用 `gh config set` 改兩個設定：
+**關掉 gh 預設開啟的 telemetry**（不用環境變數，是因為非登入 shell 讀不到 `~/.profile`），
+以及把 **`git_protocol` 設成 ssh**（gh 指令叫 git 時也走 SSH，跟這台的 git 一致）。自己開一把 fine-grained token（查 Actions 結果只需要 Actions 唯讀），
 然後 `gh auth login --with-token`（從 stdin 讀）。**不要跑 `gh auth setup-git`**（互動式登入問
 要不要 "Authenticate Git with your GitHub credentials" 也答 No）：git 照舊走 SSH（bring-up 的
 key），不該讓 github.com 的 HTTPS credential helper 改去用這把只能讀 Actions 的 token。

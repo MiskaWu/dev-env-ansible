@@ -486,7 +486,7 @@
     suite 是固定的 `stable`。
   - **認證不在這裡做**（同 glab）：token 是資料不是軟體。使用者自己開 fine-grained token
     （查 Actions 只需要 Actions 唯讀）、`gh auth login --with-token`。role 不碰存 token 的
-    `~/.config/gh/hosts.yml`（唯一碰 `~/.config/gh` 的是下面關 telemetry 那一個設定鍵）。
+    `~/.config/gh/hosts.yml`（唯一碰 `~/.config/gh` 的是下面 telemetry、git_protocol 兩個設定鍵）。
     **不要 `gh auth setup-git`**（互動式登入問 "Authenticate Git with your GitHub credentials?"
     也答 No）：它把 github.com 的 HTTPS credential helper 指向 gh；這台的 git 照舊走 SSH，
     `~/.gitconfig` 也不歸這個 role 管。
@@ -496,7 +496,11 @@
     **用 `gh config set telemetry disabled`，不用 `GH_TELEMETRY=0` 環境變數**：`~/.profile` 只有
     登入 shell 讀，Claude Code 的 Bash 工具這類非登入 shell 跑 gh 時環境變數根本不在 —— 而那正是
     這台最常跑 gh 的地方。config 寫進 `~/.config/gh/config.yml`，誰跑都生效；gh.yml 先 `gh config
-    get` 比對，已經是 disabled 就不動（冪等）。
+    get` 比對，值已經對就不動（冪等）。
+  - **gh 的 `git_protocol` 設成 ssh（使用者 2026-10-05 決定）**：預設是 https，影響 `gh repo clone`
+    這類 gh 指令怎麼叫 git；登入 gh 的 token 只能讀 Actions，走 https 一定失敗。跟「不要
+    `gh auth setup-git`」同一條線。跟 telemetry 寫在 gh.yml 同一張設定表（`_gh_settings`），
+    之後要管 gh 的其他設定就多一列。
   - **`make list` 的 gh 那列多印一行 `gh --version`**：官方新版與 universe 的 2.46 都是
     `/usr/bin/gh`，光打勾分不出來。做法是 `list.yml` 清單項目的選填 `version` 欄位（跑
     `<偵測路徑> <version>`、印輸出第一行），目前只有 gh 登記 —— 別的項目真有「有沒有分不出
