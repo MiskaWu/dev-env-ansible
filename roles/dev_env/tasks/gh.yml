@@ -53,7 +53,7 @@
 # credential helper 指向 gh，讓 git 操作拿這把只能讀 Actions 的 token 去試。這台的 git
 # 照舊走 SSH（bring-up 的 key），~/.gitconfig 也不歸這個 role 管。
 #
-# telemetry 一律關掉（使用者 2026-10-05 決定），做法見檔尾那兩個 task。
+# telemetry 一律關掉、git 協定設 ssh（使用者 2026-10-05 決定），做法見檔尾那兩個 task。
 #
 # ---- 版本：state: latest，不是其他 apt 小工具的 present -------------------------
 # 跟上面同一個理由：gh 落後太久會壞，2.46 就是實例。所以每次跑到 gh 這個 tag 都跟著官方
@@ -137,28 +137,40 @@
     quiet: true
   when: not ansible_check_mode
 
-# ---- telemetry：關掉 -------------------------------------------------------------
-# gh 2.102 預設開 telemetry（GitHub 官方收集：指令名稱、旗標、OS、repo 是否公開、是否由
-# AI agent 執行⋯，見 https://docs.github.com/en/github-cli/github-cli/github-cli-telemetry），
-# 第一次執行（`gh --version` 就算）就會建 ~/.local/state/gh/device-id。使用者 2026-10-05 決定關掉。
+# ---- gh 的設定：telemetry 關掉、git 協定用 ssh -------------------------------------
+# 兩個都是這台機器的政策，寫成一張表，用 gh 自己的 `gh config get/set` 收斂；值已經對就不動。
 #
-# **用 `gh config set telemetry disabled`，不用 GH_TELEMETRY=0 / DO_NOT_TRACK=1 環境變數**：
-# 環境變數只對讀得到它的 shell 有效，而 ~/.profile 只有登入 shell 讀（見 profile.yml 與
-# /usr/local/bin symlink 那幾條的理由）—— Claude Code 的 Bash 工具這類非登入 shell 跑 gh 時
-# 就關不掉，偏偏那正是這台最常跑 gh 的地方。config 寫在 ~/.config/gh/config.yml，誰跑都生效。
+# telemetry（使用者 2026-10-05 決定關掉）：gh 2.102 預設開，GitHub 官方收集指令名稱、旗標、OS、
+# repo 是否公開、是否由 AI agent 執行⋯（https://docs.github.com/en/github-cli/github-cli/github-cli-telemetry），
+# 第一次執行（`gh --version` 就算）就會建 ~/.local/state/gh/device-id。
+# **用 config，不用 GH_TELEMETRY=0 / DO_NOT_TRACK=1 環境變數**：環境變數只對讀得到它的 shell 有效，
+# 而 ~/.profile 只有登入 shell 讀（見 profile.yml 與 /usr/local/bin symlink 那幾條）—— Claude Code 的
+# Bash 工具這類非登入 shell 跑 gh 時就關不掉，偏偏那正是這台最常跑 gh 的地方。
 #
-# 這是 role 唯一碰 ~/.config/gh 的地方，而且只透過 gh 自己的指令改 config.yml 的這一個鍵；
+# git_protocol（使用者 2026-10-05 決定設 ssh）：gh 預設 https，影響 `gh repo clone` 這類 gh 指令
+# 怎麼叫 git。這台的 git 走 SSH，而登入 gh 的 token 只能讀 Actions，走 https 一定失敗。
+# 跟「不要 gh auth setup-git」同一條線：git 一律走 SSH。
+#
+# 這是 role 唯一碰 ~/.config/gh 的地方，只透過 gh 自己的指令改 config.yml 的這幾個鍵；
 # token 在另一個檔（hosts.yml），照舊不碰。乾跑跳過：check mode 下 gh 可能還沒裝。
-- name: Read gh telemetry setting
-  ansible.builtin.command: gh config get telemetry
-  register: _gh_telemetry
+- name: Read gh settings
+  ansible.builtin.command: gh config get {{ item.key }}
+  loop: "{{ _gh_settings | dict2items }}"
+  register: _gh_config
   changed_when: false
   failed_when: false
   when: not ansible_check_mode
+  vars:
+    _gh_settings:
+      telemetry: disabled
+      git_protocol: ssh
 
-- name: Disable gh telemetry
-  ansible.builtin.command: gh config set telemetry disabled
+- name: Apply gh settings
+  ansible.builtin.command: gh config set {{ item.item.key }} {{ item.item.value }}
+  loop: "{{ _gh_config.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}={{ item.item.value }}"
   changed_when: true
   when:
     - not ansible_check_mode
-    - _gh_telemetry.stdout | trim != 'disabled'
+    - item.stdout | default('') | trim != item.item.value
