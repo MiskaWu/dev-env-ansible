@@ -42,6 +42,11 @@
       dep: false
       path: /usr/local/node/bin/node
       desc: Node.js {{ node_version }} LTS + npm（官方 tarball，不需要 nvm）
+    - tag: rust
+      dep: false
+      path: "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+      desc: >-
+        Rust stable + rustfmt / clippy（官方 rustup；專案版本由 rust-toolchain.toml 管）
     - tag: playwright
       dep: false
       path: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
@@ -74,11 +79,11 @@
     - tag: base
       dep: true
       path: /usr/bin/jq
-      desc: claude / uv 的 installer 相依（清單見 base.yml）
+      desc: claude / uv / rustup 的 installer 相依（清單見 base.yml）
     - tag: build-tools
       dep: true
       path: /usr/bin/gcc
-      desc: build-essential —— Go cgo / uv C extension 的前置
+      desc: build-essential —— Go cgo / uv C extension / rustc linker 的前置
   loop_control:
     label: "{{ item.tag }}"
 
@@ -109,7 +114,7 @@
       相依是自動的：TAGS=python 會把 base 與 build-tools 一起帶進來，任何會影響 PATH
       的項目也都會順便更新 ~/.profile —— 不必自己列。
 
-      移除只支援 tarball / installer 裝的項目（claude / go / python / node）——
+      移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
       lazygit / glab / unzip / git-lfs / base / build-tools）要手動，`make uninstall
       TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。

@@ -1,0 +1,162 @@
+---
+# Rust —— 官方 rustup 裝 stable 工具鏈。PATH（$HOME/.cargo/bin）由 profile.yml 統一管，
+# 跟 go.yml / node.yml 同一個模式。
+#
+# ---- 為什麼是 rustup，不是 apt ------------------------------------------------
+# Ubuntu 26.04 的 rustc / cargo 套件是 1.93.1，上游 stable 已經 1.99.0（2026-10 查）——
+# Rust 六週一版，等於落後九個月，而 crate 的 `rust-version`（MSRV）一抬上去 apt 那支就只能
+# 報錯。apt 也有 rustup 套件，但停在 1.27.1（官方 1.29.1）。rustup 是上游唯一的官方發行
+# 管道，rustfmt / clippy 也是跟著工具鏈一起發的元件，版本天然對齊。
+#
+# ---- rustup 本身就是版本管理器 —— 跟「不裝通用版本管理器」那條不衝突 ------------
+# 那條擋的是 mise / asdf / nvm / pyenv 這種**跨語言、外掛式**的東西。rustup 是 Rust 自己的
+# 官方工具，跟 uv 之於 Python、GOTOOLCHAIN=auto 之於 Go 是同一個位置：專案根目錄放一份
+# `rust-toolchain.toml`，rustup 讀到就自動抓那個版本來用（`auto-install` 預設 enable），
+# 機器層只需要一個 stable。
+# 它也過得了「非互動 shell 拿不拿得到」那關：~/.cargo/bin 裡的 cargo / rustc… 是檔案系統上
+# 的 symlink、指向真實的 rustup binary（見下面 symlink 那段），不是 shell function 也不是 hook。
+#
+# ---- 工具鏈組成：minimal profile + rustfmt + clippy ----------------------------
+# rustup 的 profile 是固定的元件組合（channel manifest 裡寫死）：
+#
+#   minimal = rustc + rust-std + cargo
+#   default = minimal + rustfmt + clippy + rust-docs
+#
+# 所以「minimal + rustfmt + clippy」就是 **default 拿掉 rust-docs**。fmt 與 clippy 是日常
+# 開發一定會跑的（格式化與 lint，CI 也常卡它們），rust-docs 則是離線 HTML 文件，只給
+# `rustup doc` 開瀏覽器用 —— 實測它解開是 **67,446 個條目、737MB**（xz 壓縮 24.3MB），
+# 比整套裝好的工具鏈（~/.rustup 617MB）還大，在 WSL 上還得另外接瀏覽器；
+# doc.rust-lang.org / docs.rs 線上版就是同一份東西。rust-analyzer / rust-src 也不裝：
+# 那是編輯器的事（VS Code 的 rust-analyzer 擴充自帶 server），要用時
+# `rustup component add rust-analyzer rust-src` 一句話。
+#
+# `--profile minimal` 會寫進 ~/.rustup/settings.toml（實測 `profile = "minimal"`），
+# **之後自動抓的工具鏈也是 minimal** —— 專案的 rust-toolchain.toml 要 fmt / clippy 就自己列
+# `components = ["rustfmt", "clippy"]`（本來就該列，CI 跟其他人的機器不會有我們這台的設定）。
+#
+# ---- 相依（掛在 main.yml 的 tag 上）---------------------------------------------
+#   base：installer 是 `curl … | sh`，要 curl + ca-certificates —— 跟 claude / python 同理。
+#   build-tools：**rustc 連結時拿 `cc` 當 linker driver**，連 hello world 都要。實驗與
+#     證據見 CLAUDE.md 的 Rust 段：PATH 裡沒有 cc 時 `cargo build` 直接
+#     「error: linker `cc` not found」；而 cc 背後還要 libc6-dev 的 Scrt1.o / crti.o /
+#     libc.so —— 兩者合起來正是 build-essential。
+#
+# ---- 不設 RUSTUP_HOME / CARGO_HOME ---------------------------------------------
+# 預設就是 ~/.rustup 與 ~/.cargo，跟 claude / uv 進 $HOME 是同一個「一台機器一個開發者」
+# 的模型。改路徑只會讓 profile.yml、list.yml、uninstall.yml 多一份要同步的東西。
+
+# --no-modify-path：rustup 預設會去改 ~/.profile、~/.bashrc（加一行 `. "$HOME/.cargo/env"`）
+# —— 這個 repo 的 ~/.profile **只有一個 managed block**（見 profile.yml），不讓別人散寫。
+# 寫進 .bashrc 的那份更是對非互動 shell 無效（Ubuntu 的 .bashrc 開頭就 return）。
+# 實測加了之後 .profile / .bashrc 都沒被碰，只多一個 ~/.cargo/env（沒人 source 它）。
+#
+# pipefail + executable: /bin/bash 的理由同 claude.yml：少了它 curl 失敗會被判成成功。
+# 管線右邊維持 `| sh`（installer 本身是 POSIX sh 寫的）。
+#
+# `-y` 是必要的：installer 沒有 -y 會試著從 /dev/tty 問問題，ansible 底下沒有 tty 就直接
+# 失敗（rustup-init.sh 原始碼：`Unable to run interactively. Run with -y…`）。
+- name: Install rustup + Rust stable (official installer)
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path \
+            --profile minimal --default-toolchain stable --component rustfmt,clippy
+    creates: "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+    executable: /bin/bash
+
+- name: Check rustup is in place
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+  register: _rustup_bin
+  check_mode: false
+
+# ---- 為什麼 installer 之外還要下面兩步 -----------------------------------------
+# **`creates` 指的檔案在 rustup 裡不代表「裝完了」。** claude / uv 的 installer 把
+# `creates` 那個檔放在最後一步，所以它存在 = 整個安裝成功；rustup-init 的順序反過來：
+# 先放 ~/.cargo/bin/rustup 與 proxy，**之後**才去下載工具鏈。下載那段失敗（網路斷）時
+# task 會如實紅（pipefail），但 rustup 已經在了 —— 下一次跑 `creates` 就跳過，綠燈，
+# 而 cargo 一跑就是「no default is configured」。這正是 CLAUDE.md「`creates` 只解決冪等，
+# 不解決失敗偵測」那條的另一種形狀。
+#
+# 所以每次都把「stable + rustfmt + clippy 在不在、有沒有 default」收斂一遍。順便蓋掉
+# rustup 是自己手動裝的情況（`creates` 跳過、元件不一定齊）。
+#
+# check mode 下 command 本來就會跳過（不會真的下載），不需要另外 gate。
+
+# 已經裝好時它會查 channel：沒有新版就印 `<toolchain> unchanged - rustc …`（stdout，實測），
+# 有新的 stable 就更新 —— 等於 go.yml 的 `go_version: latest`，每次跑到 rust 這個 tag 都跟著
+# 上游走版。元件缺了會補（實測 `rustup component remove clippy` 之後重跑 → changed，
+# clippy 回來了）。
+- name: Ensure Rust stable toolchain with rustfmt / clippy
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_facts.env.HOME }}/.cargo/bin/rustup"
+      - toolchain
+      - install
+      - stable
+      - --profile
+      - minimal
+      - --component
+      - rustfmt,clippy
+  register: _rust_stable
+  changed_when: "' unchanged - ' not in _rust_stable.stdout"
+  when: _rustup_bin.stat.exists
+
+# **`rustup toolchain install` 不會順手設 default**（實測：`rustup default none` 之後跑上面
+# 那步，stable 在、但 cargo 照樣「no default is configured」），所以要自己補。
+#
+# 只在「完全沒有 default」時才設，**不是每次都 `rustup default stable`**：使用者自己
+# `rustup default nightly` 是他的決定，重跑 install 不該把它蓋回來。
+# `rustup default` 不帶參數是唯讀查詢，沒有 default 時 rc=1（實測 `error: no default
+# toolchain is configured`）。
+- name: Check Rust default toolchain
+  ansible.builtin.command:
+    argv: ["{{ ansible_facts.env.HOME }}/.cargo/bin/rustup", default]
+  register: _rust_default
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _rustup_bin.stat.exists
+
+# changed_when: true —— 只有「沒有 default」時才會跑到，跑了就一定是改了。
+- name: Set stable as default toolchain (only when none is configured)
+  ansible.builtin.command:
+    argv: ["{{ ansible_facts.env.HOME }}/.cargo/bin/rustup", default, stable]
+  changed_when: true
+  when:
+    - _rustup_bin.stat.exists
+    - _rust_default.rc != 0
+
+# --- symlink 進 /usr/local/bin -------------------------------------------------
+# 理由同 claude.yml / python.yml（目標在 $HOME 底下那條跨使用者耦合的但書也一樣）：
+# `~/.profile` 只有登入 shell 會讀，`wsl.exe -e` / systemd unit / cron / 未來的
+# `ssh dev '<cmd>'` 都拿不到 ~/.cargo/bin。
+#
+# **rustup 的 proxy 是同一支 multi-call binary**：~/.cargo/bin 裡的 cargo、rustc、rustfmt…
+# 全是指向 `rustup` 的相對 symlink（rustup 1.29.1 實測 `cargo -> rustup`；舊版用的是
+# hardlink），靠 argv[0] 決定要當誰。於是這裡建出來的是**兩段鏈**：
+# /usr/local/bin/cargo → ~/.cargo/bin/cargo → rustup。多一段不會弄壞分流 —— 經由
+# /usr/local/bin/cargo 執行時 argv[0] 仍然是 `cargo`（symlink 自己的名字，不是解開後的
+# 目標）。這是必須實驗的一點，在只有 /usr/bin:/bin:/usr/local/bin 的 `env -i` 環境實測過，
+# 見 CLAUDE.md。
+#
+# **只連這五個**：你會直接敲的入口。`cargo fmt` / `cargo clippy` 不需要另外連
+# cargo-fmt / cargo-clippy —— cargo 找外部子命令時本來就會搜 $CARGO_HOME/bin（同一個
+# env -i 環境實測兩者都通）。也**不連**沒裝的元件的 proxy（rust-analyzer、rust-gdb、
+# cargo-miri…）：rustup 一律放了那些 proxy，但一跑只會說元件沒裝，連出來只會讓
+# `command -v rust-analyzer` 命中一支不能用的東西。
+#
+# 指向 ~/.cargo/bin/<名字> 這個穩定路徑：`rustup self update` 是原地換掉本體，proxy 的
+# 路徑不變，symlink 不受影響。`cargo install` 裝的東西落在 ~/.cargo/bin、不會被連到 ——
+# 歸 profile.yml 的 PATH 管，跟 go install / npm i -g 是同一種互補。
+#
+# when 是為了 `--check`（乾跑沒真的裝，來源不存在會讓 file: state=link 報錯）。
+- name: Symlink Rust entry points into /usr/local/bin
+  become: true
+  ansible.builtin.file:
+    src: "{{ ansible_facts.env.HOME }}/.cargo/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop: [cargo, rustc, rustdoc, rustfmt, rustup]
+  when: _rustup_bin.stat.exists

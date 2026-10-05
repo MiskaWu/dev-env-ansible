@@ -13,8 +13,8 @@
   ansible 本身，歸 Makefile 的 `make init`。**每一個 import 都必須有自己的 tag**——
   **包含 Go**（2026-07 之前它是無條件必裝，那是分層畫錯）。
   `base.yml` 那四個 apt 套件（`ca-certificates` / `curl` / `git` / `jq`）**不是「基本
-  必裝」，是別人的相依**：掛 `[base, claude, python]`，因為 `claude.yml` 與 `python.yml`
-  都是 `curl … | sh` 跑官方 installer。要往那裡加東西只問一句：**某個 installer 的必經
+  必裝」，是別人的相依**：掛 `[base, claude, python, rust]`，因為 `claude.yml`、`python.yml`、
+  `rust.yml` 都是 `curl … | sh` 跑官方 installer。要往那裡加東西只問一句：**某個 installer 的必經
   路徑上真的用得到它嗎？**「好用」不是理由。
   **`jq` 是唯一通過這關的「小工具」（2026-07-27 從選裝升上來）**，靠的不是好用，是
   `install.sh` 裡真的有它的分支：解 manifest checksum 時有 jq 走 jq、沒有就退回
@@ -58,8 +58,8 @@
   「這次只跑這段」）。既然定位是「Claude 環境 + 其他用到時再裝」，那就是純命令式，宣告式
   那層是多餘的。使用者端入口只有一個指令：**`make install TAGS=<項目>`，不帶 TAGS 就是
   全裝**（= 不帶 `--tags`，跟底層 ansible 一對一，**刻意沒有隱藏的預設值**）。
-  **相依關係也用 tag 表達** —— `base.yml` 掛 `[base, claude, python]`、`build-tools.yml`
-  掛 `[build-tools, go, python]`，於是 `--tags python` 自動把兩者都帶進來
+  **相依關係也用 tag 表達** —— `base.yml` 掛 `[base, claude, python, rust]`、`build-tools.yml`
+  掛 `[build-tools, go, python, rust]`，於是 `--tags python` / `--tags rust` 自動把兩者都帶進來
   （`--list-tasks` 實測確認）。比舊的
   `install_build_tools: "{{ install_go or install_python }}"` 好在：多一個需要編譯器的東西
   只要多掛一個 tag，不必回頭改運算式。加新 import 時四件事：給它 tag、把它的 tag 掛到
@@ -84,7 +84,7 @@
   - 要把某個工具從「選裝」升進相依層，看下面 jq（升格）與 ripgrep（駁回）那組對照。
 - **反安裝分兩半：role 獨佔的路徑有 `make uninstall`，apt 的一律手動（2026-07-28 加）。**
   分界線是**所有權**，不是難易度。`/usr/local/go`、`/usr/local/node`、
-  `~/.local/share/claude`、`~/.local/bin/uv` 這幾個整包是我們放的，刪掉不牽動任何別的
+  `~/.local/share/claude`、`~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的
   東西，所以能自動化；apt 套件是**共同持有**的，移除的連帶結果取決於這台機器現在還裝了
   什麼（同一個指令在兩台機器上結果不同），那是整個 repo 裡唯一一類「讀 playbook 讀不出
   後果」的操作 —— 正確做法必然包含「人看過 `apt-get -s purge --autoremove` 的輸出再
@@ -111,6 +111,20 @@
     tag 之間沒有 AND，「移除語境下的 go」沒辦法用 tag 組合表達。兩個 playbook 各自
     有一份乾淨的 tag 命名空間，`make list` 印的是 site.yml 的、guard 兩份都問。
   - **加新項目的判準**：只有「role 獨佔一整個目錄」的才適合進 `uninstall.yml`。
+  - **Rust 是第一個「一半獨佔、一半混住」的項目（2026-10-05）。** `~/.rustup` 整包是
+    rustup 的 → 工具，直接刪；`~/.cargo` 卻混著 rustup 本體與 proxy、cargo 的快取、
+    `cargo install` 的東西、使用者的 `config.toml` / `credentials.toml`。它跟 `~/go` 同類，
+    差別在**切得開**（Cargo Book 的 Cargo Home 一節逐項寫了每個路徑是什麼），所以只拿掉
+    rustup 放的那些，其餘照 DATA 規則：`registry/`、`git/`、`bin/`（剩下的都是
+    `cargo install` 的）＋`.crates.toml` / `.crates2.json` 歸 `DATA=1`（對齊 Go 的
+    `~/go/bin`、uv 的 `uv tool`，那兩邊 `DATA=1` 也一起清）；`config.toml` /
+    `credentials.toml` 永遠保留（`~/.claude` 那一類）。
+    - **rustup 的 proxy 用 `find -L ~/.cargo/bin -maxdepth 1 -samefile ~/.cargo/bin/rustup`
+      認，不手抄名單。** 1.29.1 的 proxy 是指向 `rustup` 的相對 symlink，舊版是 hardlink，
+      `-L -samefile` 兩種都認得；名單是上游的（現在 13 個，含 `rls` / `rust-gdbgui`），
+      抄過來就會漂移。乾跑實測正好挑出本體 + 13 個 proxy，不碰別的。
+    - **刻意不用 `rustup self uninstall`**：它把整個 `~/.cargo` 連設定、token、
+      `cargo install` 的東西一起刪，正是「工具與資料是兩個決定」要擋的那種一個字全砍。
 - **`make ssh-host HOST=<網域>`：git host 的 SSH 設定，寫 `~/.ssh/config.d/`，不碰
   `~/.ssh/config` 的既有內容（2026-08-05 加）。** 界線是**時間，不是主題** —— 「SSH keys
   不在這個 role」那條仍然成立，但它指的是**開機那一組**（github.com / gitlab.com，key 得
@@ -259,11 +273,29 @@
       實體檔案），漏掉就是 `uvx` 在非登入 shell 找不到。
     - 做完之後**這個 role 裝的每一樣東西都在預設 PATH 裡了**，實測 `wsl -d dev -e`
       下 claude / uv / uvx / node / npm / npx / corepack / go / gofmt / podman /
-      lazygit / unzip 全部命中。
+      lazygit / unzip 全部命中。（2026-10-05 加 Rust 後同一個方式實測
+      cargo / rustc / rustdoc / rustfmt / rustup 與 `cargo clippy` / `cargo fmt` 也全部命中。）
+  - **rustup 的 proxy 是 multi-call binary，symlink 之前要驗 argv[0]（2026-10-05）。**
+    `~/.cargo/bin` 裡的 cargo / rustc / rustfmt… 全是指向 `rustup` 的相對 symlink
+    （1.29.1 實測 `cargo -> rustup`），靠 argv[0] 決定要當誰，所以
+    `/usr/local/bin/cargo → ~/.cargo/bin/cargo → rustup` 是兩段鏈。多一段不會弄壞分流：
+    經由 symlink 執行時 argv[0] 是 symlink 自己的名字。在 `env -i HOME=$HOME
+    PATH=/usr/bin:/bin:/usr/local/bin` 實測 `cargo` / `rustc` / `rustdoc` / `rustfmt` /
+    `rustup` 都回對的版本、`cargo build` 成功。
+    - **只連五個入口（cargo / rustc / rustdoc / rustfmt / rustup）。** `cargo clippy` /
+      `cargo fmt` 不需要另外連 `cargo-clippy` / `cargo-fmt`：cargo 找外部子命令本來就會搜
+      `$CARGO_HOME/bin`（同一個 `env -i` 環境實測兩者都通；繞過 rustup proxy、直接跑工具鏈
+      裡的 cargo 且 PATH 只有 `/usr/bin:/bin` 也通 —— 所以是 cargo 自己的行為，不是靠
+      proxy 改 PATH）。沒裝的元件的 proxy
+      （rust-analyzer、rust-gdb、cargo-miri…）也不連，連出來只會讓 `command -v` 命中一支
+      只會說「元件沒裝」的東西。
+    - `rust-toolchain.toml` 自動抓版本在同一個 `env -i` 環境也成立（見 Rust 那段），
+      所以非登入 shell 不只拿得到 stable，也拿得到專案 pin 的版本。
 - **設定檔用 `.d` drop-in，不整檔覆寫**：`/etc/containers/containers.conf.d/`、
   `registries.conf.d/`。整檔覆寫會在發行版哪天開始出貨主檔時把它蓋掉，語意也比較不清楚。
 - **不裝通用版本管理器**（mise / asdf / nvm / pyenv）。Go 靠語言內建的 `GOTOOLCHAIN=auto`、
-  Python 靠 uv，兩者都不需要外部工具。要推翻這個決定前先看 README 的「版本管理」段，
+  Python 靠 uv、Rust 靠 rustup 讀 `rust-toolchain.toml`，三者都不需要外部工具（rustup 本身是
+  Rust 官方的工具鏈管理器，跟 uv 同一個位置，不是這條擋的「跨語言、外掛式」那種）。要推翻這個決定前先看 README 的「版本管理」段，
   那裡有完整理由與各方案的取捨。
 - **nats / docker-compose 在 2026-07 移除**（用不到）。安裝方式都研究定案過，要加回來看
   README 的「版本管理」段與 git log —— 別重新從 `go install` /
@@ -292,6 +324,60 @@
   - **`node.yml` 不掛 `base` / `build-tools`**：tarball 安裝的必經路徑只用到 `get_url` 與
     tar/xz（`xz-utils` 是 Ubuntu base 的 priority: important）。node-gyp 那類要編原生模組的
     是**某個 npm 套件**的相依、不是 Node 自己的 —— 真的遇到再點 `TAGS=build-tools`。
+- **Rust 2026-10-05 加入（`TAGS=rust`）：官方 rustup → stable，minimal profile + rustfmt +
+  clippy。** 為 hyaku-monogatari（Godot 前端 + Rust 後端）加的。形狀跟 claude / uv 一樣是
+  `curl … | sh` 官方 installer，PATH 歸 `profile.yml`，入口 symlink 進 `/usr/local/bin`。
+  這裡記加的時候查到的東西：
+  - **不走 apt**：Ubuntu 26.04 的 `rustc` / `cargo` 是 1.93.1，上游 stable 1.99.0 ——
+    六週一版，落後九個月，crate 的 `rust-version` 一抬就編不過；apt 的 `rustup` 套件也停在
+    1.27.1（官方 1.29.1）。
+  - **rustup 不違反「不裝通用版本管理器」**，見那條。它也過「非互動 shell」那關：proxy 是
+    檔案系統上的 symlink 指向真實 binary，不是 shell function / hook。
+    `rust-toolchain.toml` 自動抓版本**實測成立**：只放一份 `channel = "1.98.0"`，在
+    `env -i` 非登入環境直接 `cargo --version` → rustup 自己抓 1.98.0（48 秒）然後回
+    `cargo 1.98.0`（`auto-install` 預設 enable）。
+  - **工具鏈組成 = default profile 拿掉 rust-docs。** channel manifest 寫死
+    `minimal = rustc + rust-std + cargo`、`default = minimal + rust-docs + rustfmt + clippy`。
+    rust-docs 是 `rustup doc` 的離線 HTML：解開 **67,446 個條目、737MB**（xz 24.3MB），
+    比整套裝好的工具鏈（`~/.rustup` 617MB）還大，WSL 上還得另外接瀏覽器，線上版就是同一份。
+    rust-analyzer / rust-src 是編輯器的事，不裝。
+    **`--profile minimal` 會寫進 `~/.rustup/settings.toml`，之後自動抓的工具鏈也是 minimal**
+    —— 上面那個 1.98.0 實測只有 cargo / rust-std / rustc，沒有 rustfmt / clippy。專案的
+    `rust-toolchain.toml` 要 fmt / clippy 就自己列 `components`（本來就該列，CI 沒有我們這台的設定）。
+  - **`--no-modify-path`**：rustup 預設會往 `.profile` / `.bashrc` 加 `. "$HOME/.cargo/env"`，
+    違反「`~/.profile` 只有一個 managed block」。實測加了之後兩個檔都沒被碰，只多一個沒人
+    source 的 `~/.cargo/env`；`~/.cargo/bin` 進 block 那行 PATH（給 `cargo install` 的東西用）。
+  - **`creates` 在 rustup 上不代表「裝完了」，所以 installer 之後還有收斂步驟。** claude / uv
+    的 `creates` 檔是 installer 最後一步才放的；rustup-init 反過來，先放
+    `~/.cargo/bin/rustup` 再下載工具鏈 —— 下載失敗那次會紅，但下一次 `creates` 就跳過、綠燈，
+    cargo 卻沒有工具鏈可跑。所以每次都跑 `rustup toolchain install stable --profile minimal
+    --component rustfmt,clippy`（已裝好時印 `… unchanged - rustc …`，有新 stable 就更新 ——
+    等於 `go_version: latest`），再「**沒有 default 才** `rustup default stable`」。三個情境都
+    實測過：
+    - `rustup component remove clippy` 後重跑 → changed=1，clippy 回來；
+    - `rustup default none` 後重跑 → 收斂步驟補上 stable 但**沒有設 default**
+      （`rustup toolchain install` 不會順手設，cargo 照樣「no default is configured」）——
+      這就是後面那步存在的理由；加上之後 changed=1、`stable (default)`；
+    - 自己 `rustup default <別的>` 後重跑 → 那步 skipped，**不蓋掉使用者的選擇**。
+    裝好之後重跑 `changed=0`。
+  - **相依的證據（照 jq / ripgrep 那組的標準）**：
+    - **base**：installer 本身是 `curl https://sh.rustup.rs | sh`，`rustup-init.sh` 的
+      `downloader()` 也先找 curl 去抓 rustup-init 二進位 —— 必經路徑上指得出來。
+      **但 rustup 二進位自己下載工具鏈不吃系統 CA**，別把 ca-certificates 的理由記成那裡：
+      在 `unshare -rm` 裡把 `/etc/ssl/certs` bind 成空目錄，`rustup check` 照樣成功
+      （`unshare -rn` 斷網時同一條會失敗，證明它真的有連線、不是讀快取），同條件下
+      `curl` 是 `error 77 … ca-certificates.crt`。所以 ca-certificates 對 rust 而言純粹是
+      curl 那段的相依。
+    - **build-tools**：rustc 連結**任何**程式都要 `cc`，不是「碰到 C 相依才要」。
+      決定性對照：PATH 只放 cargo / rustc / rustup 三個 symlink → hello world
+      「error: linker `cc` not found」；同一個目錄**只多一支 cc** → 編過。原始碼層面：
+      `RUSTC_BOOTSTRAP=1 rustc -Z unstable-options --print target-spec-json` 顯示
+      `linker-flavor: gnu-lld-cc`、沒有 `linker` 鍵（＝預設 cc）、`link-self-contained`
+      只含 `linker`（rust-lld 自帶，所以 binutils 的 ld 不是重點）；`--print link-args` 是
+      `cc -m64 … -lgcc_s -lc -B…/gcc-ld -fuse-ld=lld -pie -nodefaultlibs`。cc 背後的
+      `Scrt1.o` / `crti.o` / `libc.so` / `libc_nonshared.a` 全屬 `libc6-dev`（`dpkg -S`），
+      `cc` 本身屬 gcc —— 兩者合起來就是 build-essential。
+  - **uninstall 的切法**見上面反安裝那條的 Rust 子項。
 - **`TAGS=playwright` 給的是「這台機器能跑 headless 瀏覽器」，不是 Playwright 本身
   （2026-07-28 加）。** Playwright 的東西分三層，只有第三層歸機器，判準是**要不要 root**
   與**綁不綁專案版本**：語言套件（歸專案）／瀏覽器 binary（歸專案）／系統 `.so` + 字型
@@ -333,7 +419,7 @@
   - **`install` 不可以把任何 `--tags` 寫死。** 不帶 `TAGS` 就是不帶 `--tags`（＝全裝），
     跟底層 ansible 一對一。2026-07-28 有一版寫死 `--tags core`，結果 `make install TAGS=go`
     靜默裝成 core —— 隱藏的預設值就是這樣咬人的。
-  - **`profile` 不必自己補**：它掛在 `[profile, claude, go, python, podman]` 上，任何會
+  - **`profile` 不必自己補**：它掛在 `[profile, claude, go, python, node, rust, podman]` 上，任何會
     影響 PATH 的項目都會帶到它（舊設計得記得寫 `TAGS=go,profile`）。仍然刻意**不用**
     `always` —— 那會讓 `make facts` 從唯讀變成會改 `~/.profile`。
 - **指令介面只有 `make install TAGS=…`，不要再引入 `install-<項目>` 那種 target。**

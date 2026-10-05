@@ -3,7 +3,13 @@
 # 的工具」，而是別人的前置：Go 碰到 cgo（最常見是 mattn/go-sqlite3）、uv 遇到沒有預編譯
 # wheel 而要現場編 C extension 時都靠它。
 #
-# **相依關係寫在 main.yml 的 tag 上**（這個檔被 import 時掛 `[build-tools, go, python]`），
+# **Rust 是三者裡唯一「每一次」都要它的**，不是「碰到某種套件才要」：rustc 在
+# x86_64-unknown-linux-gnu 上連結任何東西都呼叫 `cc` 當 linker driver（target spec 沒寫
+# linker = 預設 cc），而 cc 連結時要 libc6-dev 的 Scrt1.o / crti.o / libc.so。實驗：PATH
+# 裡拿掉 cc，連 `cargo new` 出來的 hello world 都「error: linker `cc` not found」。
+# 證據細節見 CLAUDE.md 的 Rust 段。
+#
+# **相依關係寫在 main.yml 的 tag 上**（這個檔被 import 時掛 `[build-tools, go, python, rust]`），
 # 所以 `make install TAGS=python` 會自動把它帶進來，不需要以前那個
 # `install_build_tools: "{{ install_go or install_python }}"` 布林運算式 —— 將來多一個
 # 要編譯器的東西，只要在 main.yml 那行多掛一個 tag，不必回頭改運算式。
