@@ -1,0 +1,164 @@
+---
+# gh —— GitHub 官方 CLI。2026-10-05 加，讓 Claude 能查私有 repo 的 GitHub Actions 結果
+# （`gh run list` / `gh run watch` / `gh run view --log-failed`）。跟 glab 同一類：日常會敲、
+# 別的工作流程會呼叫，但不是這個 role 任何 installer 的相依，所以掛 tools、不進 base.yml。
+#
+# ---- 為什麼不能用 Ubuntu 的 gh：universe 那支是壞的 ---------------------------
+# Ubuntu 26.04 universe 有 gh 2.46.0-4，但 gh 官方安裝文件寫明那一版不能用
+# （https://github.com/cli/cli/blob/trunk/docs/install_linux.md 的 Ubuntu Community 一節）：
+#
+#     As of November 2025, GitHub CLI maintainers strongly recommend official Debian
+#     packages especially as the community-distributed 2.45.x / 2.46.x version is
+#     broken due to deprecated GitHub APIs.
+#
+# 這跟 lazygit / glab / ffmpeg 走 universe 的理由（「跟上游同代、沒有追版的必要」）正好
+# 相反：gh 是一個**伺服器端會淘汰 API 的客戶端**，舊版不是少功能，是不能用。所以 gh 是
+# 這個 repo **第一個（目前唯一一個）第三方 apt 套件庫**，破例的理由就是上面那句話。
+#
+# ---- 套件庫怎麼加：照官方步驟，逐步換成 ansible 內建模組 ------------------------
+# 官方步驟（同一份文件的 Debian 一節）是一串 shell：wget 金鑰 → tee 到
+# /etc/apt/keyrings/githubcli-archive-keyring.gpg → chmod go+r → echo 一行
+# `deb [arch=$(dpkg --print-architecture) signed-by=…] https://cli.github.com/packages stable main`
+# 到 /etc/apt/sources.list.d/github-cli.list → apt update → apt install gh。
+# 這裡**金鑰網址、keyring 路徑與權限、URI / suite / component / arch / signed-by 全照
+# 文件**，只有來源檔的格式不同：
+#
+#   - **來源檔寫 deb822（github-cli.sources），用 template，不用 apt_repository 也不用
+#     deb822_repository。** Ubuntu 26.04 自己的來源就是 deb822（ubuntu.sources），apt 3.2
+#     也內建 `apt modernize-sources` 把單行格式轉過去 —— 方向很清楚；而 apt_repository
+#     只會寫單行 .list。deb822_repository 則要 python3-debian，這台沒有（ansible-core 2.20
+#     起 `install_python_debian` 預設 false，沒有就直接失敗），而且**乾跑時連自動安裝都
+#     不做**：實測 `--check` 回 "python3-debian must be installed to use check mode"
+#     —— 新機器上 `make check TAGS=gh` 會整個中止。為了寫一個六行的檔多一個只有 ansible
+#     用得到的套件、再讓乾跑在新機器上壞掉，不划算。來源檔本來就是 sources.list.d 裡的
+#     drop-in，用 template 寫正好是這個 repo 寫 drop-in 的既有做法（containers.conf.d、
+#     registries.conf.d、ssh config.d 都是），check mode 的 diff 也準。
+#   - arch 用 detect.yml 的 dev_env_arch（Debian 拼法 amd64 / arm64，就是
+#     `dpkg --print-architecture` 會給的值）—— facts 已經有的不再 shell 出去拿。
+#   - **不需要 gnupg / lsb-release**（base.yml 2026-07 拿掉的那兩個）：官方給的是已經
+#     dearmor 過的二進位 keyring，apt 用自帶的 gpgv 驗；suite 是固定的 `stable`，不必拿 codename。
+#   - **不掛 base**：get_url 是 Python 端發 HTTPS、不呼叫 curl（同 go.yml / node.yml）；
+#     官方的 gh 套件自己 `Depends: git`，前置交給 apt。apt 走 https 要的 ca-certificates
+#     是 Ubuntu 的 Priority: important，本來就在（同 node.yml 對 xz-utils 的判斷）。
+#
+# ---- 認證不在這裡做 ------------------------------------------------------------
+# 立場同 glab.yml：**token 是資料不是軟體**，同 SSH key 歸 bring-up 的那條界線。這個
+# role 只負責把 gh 裝好，不建 token、不登入、不碰 ~/.config/gh。使用者自己到 GitHub 開
+# 一把 fine-grained token（查 Actions 結果只需要 Actions: Read-only），然後
+#
+#     gh auth login --with-token      # 從 stdin 讀 token
+#
+# 另外**不要跑 `gh auth setup-git`**（互動式 `gh auth login` 問 "Authenticate Git with
+# your GitHub credentials?" 也答 No）：那會在 ~/.gitconfig 把 github.com 的 HTTPS
+# credential helper 指向 gh，讓 git 操作拿這把只能讀 Actions 的 token 去試。這台的 git
+# 照舊走 SSH（bring-up 的 key），~/.gitconfig 也不歸這個 role 管。
+#
+# telemetry 一律關掉（使用者 2026-10-05 決定），做法見檔尾那兩個 task。
+#
+# ---- 版本：state: latest，不是其他 apt 小工具的 present -------------------------
+# 跟上面同一個理由：gh 落後太久會壞，2.46 就是實例。所以每次跑到 gh 這個 tag 都跟著官方
+# 套件庫走版（同 go_version: latest、rust 的 stable）。它也順手修掉另一種狀況：機器上
+# 早就從 universe 手動裝過 2.46 的話，`present` 會把它當成「已經有了」原封不動留著。
+#
+# ---- 反安裝 --------------------------------------------------------------------
+# 套件本身照 apt 的規矩手動（Makefile 擋下並印步驟）。但這個項目多放了兩個**我們自己的**
+# 檔案（keyring 與來源檔），所有權是 role 的，所以手動步驟要把它們列出來 —— Makefile
+# 直接讀這個檔裡 `dest: /etc/apt/…` 的那幾行印出確切路徑，不另外抄（**所以下面兩個 dest
+# 要維持字面路徑，別改成變數**，改了 Makefile 就靜默印不出來）。它們不進
+# uninstall.yml 自動刪，因為生命週期綁在套件上：要等人看過模擬、決定 purge 之後才該拿掉
+# （先拿掉而最後決定不 purge，gh 就斷了更新來源）。~/.config/gh 是你的 token，不在清單裡；
+# 要清就自己 `gh auth logout`，並到 GitHub 撤銷那把 token。
+
+- name: Ensure /etc/apt/keyrings exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# **pin 官方文件公布的 SHA256**，不是只信 TLS。金鑰是會輪替的 —— 2026-10-05 下載的這份
+# 裡有兩把：2022-09-06 那把（23F3D4EA75716059）已在 2026-09-05 到期，2026-04-07 換上
+# 5612B36462313325，兩個指紋都跟文件頂端那段一致（`gpg --show-keys` 驗過）。pin 住之後
+# 輪替一定是大聲的：新機器 get_url 報 checksum 不符；舊機器則是 apt update 驗不過這個
+# 來源的簽章（NO_PUBKEY / EXPKEYSIG）。兩種都是同一個修法 —— 照文件更新這裡的 checksum
+# 再跑一次，get_url 發現既有檔對不上 pin 就會重抓（不 pin 的話，dest 已存在時 get_url
+# 根本不會重抓，舊機器只能手動刪檔）。
+- name: Download GitHub CLI archive keyring
+  become: true
+  ansible.builtin.get_url:
+    url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    checksum: sha256:6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+    mode: "0644"
+  register: _gh_keyring
+
+- name: Add GitHub CLI apt source (deb822)
+  become: true
+  ansible.builtin.template:
+    src: github-cli.sources.j2
+    dest: /etc/apt/sources.list.d/github-cli.sources
+    mode: "0644"
+  register: _gh_source
+
+# 新加的來源**必須馬上刷新**，不能交給下面那個 task 的 cache_valid_time —— 一小時內才
+# update 過的機器（剛跑過任何別的 apt 項目就是）會跳過刷新，快取裡還沒有官方套件庫，
+# 於是 `name: gh` 靜默裝成 universe 那支壞掉的 2.46。
+- name: Refresh apt cache for the new source
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+  when: _gh_keyring is changed or _gh_source is changed
+
+- name: Install gh (official repository, tracks latest)
+  become: true
+  ansible.builtin.apt:
+    name: gh
+    state: latest
+    update_cache: true
+    cache_valid_time: 3600
+
+# 最後驗一次裝到的不是 2.45 / 2.46 —— 這個項目存在的理由就是避開那一版，而「官方套件庫
+# 抓不到、apt 靜默退回 universe」這種失敗不驗是看不出來的（gh 照樣在 /usr/bin、照樣
+# 跑得起來，要等打到被淘汰的 API 才壞）。乾跑跳過：check mode 沒有真的裝，機器上若原本
+# 是 2.46 會誤報。
+- name: Read installed gh version
+  ansible.builtin.command: dpkg-query -W -f=${Version} gh
+  register: _gh_version
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Assert gh is not the broken community 2.45 / 2.46
+  ansible.builtin.assert:
+    that: _gh_version.stdout is version('2.47', '>=')
+    fail_msg: >-
+      裝到的 gh 是 {{ _gh_version.stdout }} —— 那是 Ubuntu universe 的社群版，官方說明它因為
+      GitHub 淘汰 API 已經不能用。看 `apt-cache policy gh` 有沒有 https://cli.github.com/packages
+      這個來源、apt update 有沒有報它的簽章錯誤（金鑰輪替就是這樣，見 gh.yml keyring 那段）。
+    quiet: true
+  when: not ansible_check_mode
+
+# ---- telemetry：關掉 -------------------------------------------------------------
+# gh 2.102 預設開 telemetry（GitHub 官方收集：指令名稱、旗標、OS、repo 是否公開、是否由
+# AI agent 執行⋯，見 https://docs.github.com/en/github-cli/github-cli/github-cli-telemetry），
+# 第一次執行（`gh --version` 就算）就會建 ~/.local/state/gh/device-id。使用者 2026-10-05 決定關掉。
+#
+# **用 `gh config set telemetry disabled`，不用 GH_TELEMETRY=0 / DO_NOT_TRACK=1 環境變數**：
+# 環境變數只對讀得到它的 shell 有效，而 ~/.profile 只有登入 shell 讀（見 profile.yml 與
+# /usr/local/bin symlink 那幾條的理由）—— Claude Code 的 Bash 工具這類非登入 shell 跑 gh 時
+# 就關不掉，偏偏那正是這台最常跑 gh 的地方。config 寫在 ~/.config/gh/config.yml，誰跑都生效。
+#
+# 這是 role 唯一碰 ~/.config/gh 的地方，而且只透過 gh 自己的指令改 config.yml 的這一個鍵；
+# token 在另一個檔（hosts.yml），照舊不碰。乾跑跳過：check mode 下 gh 可能還沒裝。
+- name: Read gh telemetry setting
+  ansible.builtin.command: gh config get telemetry
+  register: _gh_telemetry
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Disable gh telemetry
+  ansible.builtin.command: gh config set telemetry disabled
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - _gh_telemetry.stdout | trim != 'disabled'

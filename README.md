@@ -77,7 +77,7 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
-**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `git-lfs` / `ffmpeg` / `unzip` /
+**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `unzip` /
 `base` / `build-tools`）要手動**，指令會擋下來並告訴你怎麼做。理由不是懶：apt 套件是共同
 持有的，移除的連帶結果**取決於這台機器現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu`
 與 `ubuntu-wsl` metapackage 一起帶走。同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
@@ -86,6 +86,11 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 apt-get -s purge --autoremove <套件名>    # 先看影響範圍，這步不會動到系統
 sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行
 ```
+
+**`gh` 多放了兩個這個 role 自己的檔**：GitHub 官方套件庫的 keyring 與來源檔（見下）。所有權
+是我們的，所以 `make uninstall TAGS=gh` 印手動步驟時會把它們的確切路徑一起列出來（直接讀
+`gh.yml` 裡的 `dest:`，不是另外抄的）；但它們的生命週期綁在套件上 —— 模擬完決定 purge 了才
+該拿掉，否則留下的 gh 就斷了更新來源 —— 所以同樣是手動、purge 之後再刪，不進自動移除。
 
 **工具與資料是兩個決定。** 預設只拿掉工具，快取／模組／已下載的 runtime 留著並報出
 大小，要一起清才加 `DATA=1`。因為那些目錄常混著你自己的東西 —— 最典型是 `~/go`，
@@ -160,7 +165,7 @@ dev-env-ansible/
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
     ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、firewall driver）
-    ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in
+    ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in、gh 的 apt 來源
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
@@ -170,6 +175,7 @@ dev-env-ansible/
         ├── unzip.yml           # unzip                        (tags: [tools, unzip])
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
         ├── glab.yml            # glab（GitLab CLI）            (tags: [tools, glab])
+        ├── gh.yml              # gh（GitHub CLI，官方 apt 套件庫）  (tags: [tools, gh])
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
         ├── ffmpeg.yml          # ffmpeg（合成 MP4）          (tags: [tools, ffmpeg])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
@@ -219,6 +225,30 @@ Playwright 錄影用的是自己那支，需要系統 ffmpeg 的是專案的合�
 關掉只少 8 個跟編碼無關的套件（藍光解密、PipeWire client 等，8.7MB / 178.8MB），不值得讓它
 成為唯一長得不一樣的 apt task（數據見 `ffmpeg.yml` 檔頭）。
 
+**`gh` 也屬前者，但它是唯一加了第三方 apt 套件庫的項目。** Ubuntu universe 有 gh（26.04 是
+2.46.0），可是 gh 官方的[安裝文件](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+點名那一版已經不能用：
+
+> As of November 2025, GitHub CLI maintainers strongly recommend official Debian packages
+> especially as the community-distributed `2.45.x` / `2.46.x` version is broken due to
+> deprecated GitHub APIs.
+
+gh 是 GitHub 官方的工具，也是一個伺服器端會淘汰 API 的客戶端 —— 舊版不是少功能，是不能用，
+跟 lazygit / glab「universe 跟上游同代就夠」正好相反。所以 `TAGS=gh` 照官方步驟加
+`https://cli.github.com/packages`：keyring 放 `/etc/apt/keyrings/githubcli-archive-keyring.gpg`
+（pin 文件公布的 SHA256）、來源寫成 deb822 的 `/etc/apt/sources.list.d/github-cli.sources`
+（Ubuntu 26.04 自己的 `ubuntu.sources` 就是這個格式），套件用 `state: latest` 跟著官方走版。
+全程 ansible 內建模組，沒有 `curl | tee`；為什麼不用 `apt_repository` / `deb822_repository`、
+金鑰輪替怎麼處理，見 `gh.yml` 檔頭。
+
+**這個 role 只裝 gh，不做認證** —— 跟 glab 同一個立場：token 是資料不是軟體，不歸這裡管，
+存 token 的 `~/.config/gh/hosts.yml` 也不碰。唯一的例外是用 `gh config set telemetry disabled`
+**關掉 gh 預設開啟的 telemetry**（寫進 `config.yml`；不用環境變數，是因為非登入 shell 讀不到
+`~/.profile`）。自己開一把 fine-grained token（查 Actions 結果只需要 Actions 唯讀），
+然後 `gh auth login --with-token`（從 stdin 讀）。**不要跑 `gh auth setup-git`**（互動式登入問
+要不要 "Authenticate Git with your GitHub credentials" 也答 No）：git 照舊走 SSH（bring-up 的
+key），不該讓 github.com 的 HTTPS credential helper 改去用這把只能讀 Actions 的 token。
+
 ## 首次設定
 
 前提：distro 已由 [`wsl-bootstrap`](../wsl-bootstrap) 建好，baseline 只有 `git` + `make`
@@ -262,6 +292,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
   · lazygit      lazygit（git 的 TUI）
   · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
+  · gh           gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）
   · git-lfs      git-lfs（沒裝不會報錯 —— clone 拿到的是 pointer，commit 會把大檔直接塞進 git）
   · ffmpeg       ffmpeg（合成 MP4：H.264 + AAC；Playwright 附的那支只有 VP8／WebM）
   · unzip        unzip（不少 release 只出 zip）
@@ -272,8 +303,11 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude ffmpeg git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    base build-tools claude ffmpeg gh git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
+
+`gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支
+壞掉的 2.46 都是 `/usr/bin/gh`，光打勾分不出是哪一支。
 
 **4. 裝。**
 
@@ -405,8 +439,8 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
 | `rust.yml`（`~/.cargo/bin`） | `cargo` `rustc` `rustdoc` `rustfmt` `rustup` |
 
-apt 裝的（podman、lazygit、glab、unzip、git-lfs、ffmpeg、base、build-tools、playwright 的 `.so`）
-本來就在 `/usr/bin`，不需要處理。
+apt 裝的（podman、lazygit、glab、gh、unzip、git-lfs、ffmpeg、base、build-tools、playwright 的
+`.so`）本來就在 `/usr/bin`，不需要處理。
 
 兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的
 東西（`npm i -g` 的 bin 在 `/usr/local/node/bin`、`go install` 的在 `~/go/bin`，那些不會

@@ -125,6 +125,18 @@
       抄過來就會漂移。乾跑實測正好挑出本體 + 13 個 proxy，不碰別的。
     - **刻意不用 `rustup self uninstall`**：它把整個 `~/.cargo` 連設定、token、
       `cargo install` 的東西一起刪，正是「工具與資料是兩個決定」要擋的那種一個字全砍。
+  - **gh 是第一個「apt 套件 + role 自己放的檔」的項目（2026-10-05）。** 套件照 apt 的規矩手動；
+    但 keyring（`/etc/apt/keyrings/githubcli-archive-keyring.gpg`）與來源檔
+    （`/etc/apt/sources.list.d/github-cli.sources`）的**所有權是 role 的**，所以手動步驟必須
+    把它們列出來，不能讓人 purge 完留一把第三方金鑰和一個沒人用的來源。
+    - **不進 `uninstall.yml` 自動刪**：它們的生命週期綁在套件上，要等人看過模擬、決定 purge
+      之後才該拿掉（先刪而最後決定不 purge，gh 就斷了更新來源），而 playbook 沒辦法排在一個
+      手動步驟後面。也不能讓 `make uninstall TAGS=gh` 只刪檔不動套件 —— 那正是「斷了更新來源」。
+    - **路徑由 Makefile 從 `gh.yml` 的 `dest: /etc/apt/…` 行讀出來印**，不在 Makefile 抄一份
+      （同 ssh-host-rm 從 `IdentityFile` 讀 key 路徑：印錯路徑，使用者會照著 `rm`）。比對只認
+      `dest:` 行，所以 `gh.yml` 註解裡提到的路徑不會被誤印。之後別的項目也加了套件庫，同一段
+      自動涵蓋，不必改 Makefile。
+    - `~/.config/gh`（token）不在清單裡，同 `~/.claude` —— 是使用者的資料。
 - **`make ssh-host HOST=<網域>`：git host 的 SSH 設定，寫 `~/.ssh/config.d/`，不碰
   `~/.ssh/config` 的既有內容（2026-08-05 加）。** 界線是**時間，不是主題** —— 「SSH keys
   不在這個 role」那條仍然成立，但它指的是**開機那一組**（github.com / gitlab.com，key 得
@@ -162,8 +174,8 @@
     參數**。塞進 site.yml 會讓 `make list` 多出一個看似可裝、不帶 `HOST` 只會失敗的項目，
     還得再掛一個 `never` 把 `never` 的語意搞糊。所以「每個 import 都要有自己的 tag」那條
     在這裡不適用 —— 那條講的是可安裝項目，這是帶參數的動作。
-- **apt 裝的東西只裝不卸，`state: present` 只保證「有」。** 從 `tools.yml` 刪掉一個
-  task 只是「以後不裝」，已經裝好的會留著。**不要**去加「absent 清單 + `purge`」的機制
+- **apt 裝的東西只裝不卸，`state: present` 只保證「有」**（唯一用 `latest` 的是 gh，理由見
+  gh 那條）。從 `tools.yml` 刪掉一個 task 只是「以後不裝」，已經裝好的會留著。**不要**去加「absent 清單 + `purge`」的機制
   ——清單打錯一個字就照刪，而且那正是上面說的「替你做了不該替你做的決定」。
   手動移除前先 `apt-get -s purge --autoremove <pkg>` 看影響範圍，發行版自帶的尤其要看：
   `tmux` 是 Ubuntu WSL base image 內建（跟 `byobu`、`ubuntu-wsl` 同一批裝進來，dpkg.log
@@ -275,7 +287,8 @@
       下 claude / uv / uvx / node / npm / npx / corepack / go / gofmt / podman /
       lazygit / unzip 全部命中。（2026-10-05 加 Rust 後同一個方式實測
       cargo / rustc / rustdoc / rustfmt / rustup 與 `cargo clippy` / `cargo fmt` 也全部命中；
-      同日加 ffmpeg 後 `ffmpeg` / `ffprobe` 也命中 `/usr/bin`。）
+      同日加 ffmpeg 後 `ffmpeg` / `ffprobe` 也命中 `/usr/bin`；加 gh 後 `wsl -d dev -e` 與
+      `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/local/bin` 也都解析到 `/usr/bin/gh`。）
   - **rustup 的 proxy 是 multi-call binary，symlink 之前要驗 argv[0]（2026-10-05）。**
     `~/.cargo/bin` 裡的 cargo / rustc / rustfmt… 全是指向 `rustup` 的相對 symlink
     （1.29.1 實測 `cargo -> rustup`），靠 argv[0] 決定要當誰，所以
@@ -427,6 +440,74 @@
     （跟模擬一致），重跑 changed=0；`ffmpeg -encoders` 有 `libx264` 與 `aac`；
     `testsrc=1080x1920:rate=30` + `sine` 編 2 秒 → ffprobe 看到 h264（High、yuv420p）與
     aac（LC）兩個串流、容器 mp4。apt 裝在 `/usr/bin`，不必 symlink、不碰 `profile.yml`。
+- **`TAGS=gh`（2026-10-05 加）：GitHub 官方 CLI，走 GitHub 的官方 apt 套件庫，掛
+  `[tools, gh]` —— 整個 repo 第一個（目前唯一一個）第三方 apt 套件庫。** 為了讓 Claude 查
+  私有 repo 的 GitHub Actions 結果（`gh run list` / `gh run watch` / `gh run view --log-failed`）
+  加的。形狀跟 glab 一樣是 tools；差在套件不能從 universe 拿。查到的東西：
+  - **破例的理由是官方點名 universe 那支壞了，不是「想要新版」。** Ubuntu 26.04 universe 是
+    2.46.0-4，而[官方安裝文件](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+    （Ubuntu Community 一節）寫：「As of November 2025, GitHub CLI maintainers strongly
+    recommend official Debian packages especially as the community-distributed 2.45.x / 2.46.x
+    version is broken due to deprecated GitHub APIs.」gh 是伺服器端會淘汰 API 的**客戶端**，
+    舊版不是少功能而是不能用 —— 跟 lazygit / glab / ffmpeg 留在 universe 的理由（跟上游同代、
+    不必追版）正好相反。下一個想加第三方套件庫的項目，要拿得出同等級的理由。
+  - **金鑰網址、keyring 路徑、權限（`0644` = 文件的 `chmod go+r`）、URI / suite / component /
+    arch / signed-by 全照官方文件**，只有來源檔格式不同：用 template 寫 deb822 的
+    `github-cli.sources`，不是文件那行單行 `github-cli.list`。arch 用 `dev_env_arch`（Debian
+    拼法，等於 `dpkg --print-architecture`）。不用 `apt_repository` / `deb822_repository` 的理由：
+    - Ubuntu 26.04 自己的來源就是 deb822（`ubuntu.sources`），apt 3.2 內建
+      `apt modernize-sources` 把單行轉過去；`apt_repository` 只會寫單行 `.list`。
+    - `deb822_repository` 要 python3-debian，這台沒有；ansible-core 2.20 起
+      `install_python_debian` 預設 false（沒有就失敗），而且 **check mode 下連自動安裝都不做**
+      —— 實測 `--check` 回 `python3-debian must be installed to use check mode`，新機器上
+      `make check TAGS=gh` 會整個中止。為一個六行的檔多裝一個只有 ansible 用得到的套件，不划算。
+    - 來源檔本質上就是 `sources.list.d` 的 drop-in，用 template 寫是這個 repo 寫 drop-in 的
+      既有做法（containers.conf.d / registries.conf.d / ssh config.d），check mode 的 diff 也準。
+    - 上機前先在**不用 root 的私有 apt 目錄**（`apt-get -o Dir::Etc::SourceList=/dev/null
+      -o Dir::Etc::SourceParts=<暫存> -o Dir::State=<暫存> -o Dir::Cache=<暫存>
+      -o Debug::NoLocking=1 update`）拿渲染出來的檔與下載的 keyring 跑過：簽章驗過、
+      檔頭的 `#` 註解不影響 deb822 解析、候選版本 2.102.0。加第三方來源前值得先這樣試。
+  - **keyring pin 官方文件公布的 SHA256**（`get_url` 的 `checksum`）。金鑰真的會輪替：
+    2026-10-05 抓到的那份裡有兩把，2022 那把（`…23F3D4EA75716059`）已在 2026-09-05 到期、
+    2026-04-07 換上 `…5612B36462313325`，兩個指紋都跟文件頂端一致（`gpg --show-keys`）。
+    pin 讓輪替變成大聲的失敗，而且修法只有一個：照文件改 checksum 再跑 —— get_url 發現既有檔
+    對不上 pin 會重抓；**不 pin 的話 dest 已存在時 get_url 不會重抓**，舊機器只能手動刪檔。
+  - **新來源加進去要立刻無條件 `apt update`，不能吃 `cache_valid_time: 3600`。** 一小時內
+    update 過的機器（同一次 run 先跑了任何別的 apt 項目就是）會跳過刷新，快取裡還沒有官方
+    套件庫，`name: gh` 就**靜默裝成 universe 的 2.46**。所以 keyring 或來源檔 changed 時另跑
+    一次刷新。之後任何加第三方來源的項目都有同一個坑。
+  - **`state: latest`，apt 小工具裡唯一不是 `present` 的。** 同一個理由（落後會壞），等於
+    `go_version: latest`。也順手修掉「之前手動從 universe 裝過 2.46」的機器 —— `present` 會把它
+    當成已經有了、原封不動。最後再 assert 裝到的版本 ≥ 2.47（`dpkg-query`），擋「官方來源沒抓到、
+    靜默退回 universe」；check mode 跳過（沒真的裝，原本是 2.46 的機器會誤報）。
+  - **不掛 base**：keyring 用 `get_url`（Python 發 HTTPS，不呼叫 curl），官方 gh 套件自己
+    `Depends: git`；apt 走 https 要的 ca-certificates 是 Priority: important（同 node 對 xz-utils
+    的判斷）。base.yml 當初拿掉的 gnupg / lsb-release 也照樣用不到：官方給的是二進位 keyring，
+    suite 是固定的 `stable`。
+  - **認證不在這裡做**（同 glab）：token 是資料不是軟體。使用者自己開 fine-grained token
+    （查 Actions 只需要 Actions 唯讀）、`gh auth login --with-token`。role 不碰存 token 的
+    `~/.config/gh/hosts.yml`（唯一碰 `~/.config/gh` 的是下面關 telemetry 那一個設定鍵）。
+    **不要 `gh auth setup-git`**（互動式登入問 "Authenticate Git with your GitHub credentials?"
+    也答 No）：它把 github.com 的 HTTPS credential helper 指向 gh；這台的 git 照舊走 SSH，
+    `~/.gitconfig` 也不歸這個 role 管。
+  - **gh 的 telemetry 一律關掉（使用者 2026-10-05 決定）**：2.102 預設開，第一次執行
+    （`gh --version` 就算）會建 `~/.local/state/gh/device-id`，收集指令名稱、旗標、repo 是否公開、
+    是否由 AI agent 執行等（官方說明 docs.github.com/en/github-cli/github-cli/github-cli-telemetry）。
+    **用 `gh config set telemetry disabled`，不用 `GH_TELEMETRY=0` 環境變數**：`~/.profile` 只有
+    登入 shell 讀，Claude Code 的 Bash 工具這類非登入 shell 跑 gh 時環境變數根本不在 —— 而那正是
+    這台最常跑 gh 的地方。config 寫進 `~/.config/gh/config.yml`，誰跑都生效；gh.yml 先 `gh config
+    get` 比對，已經是 disabled 就不動（冪等）。
+  - **`make list` 的 gh 那列多印一行 `gh --version`**：官方新版與 universe 的 2.46 都是
+    `/usr/bin/gh`，光打勾分不出來。做法是 `list.yml` 清單項目的選填 `version` 欄位（跑
+    `<偵測路徑> <version>`、印輸出第一行），目前只有 gh 登記 —— 別的項目真有「有沒有分不出
+    好壞」的情況再加，不要為了整齊全部補上。
+  - **反安裝**見上面反安裝那條的 gh 子項。
+  - **實測（本機套用）**：`make check TAGS=gh` 在還沒裝的機器上 changed=4、正常跑完；
+    `make install TAGS=gh` → changed=4（keyring、來源檔、刷新、安裝），重跑 changed=0；
+    `gh version 2.102.0 (2026-09-30)`；`apt-cache policy gh` 已裝版本來自
+    `https://cli.github.com/packages stable/main`（universe 的 2.46.0-4 仍在候選表，版本較低
+    不會被選）；`gh auth status` 回 "You are not logged into any GitHub hosts"；
+    `apt-get -s purge --autoremove gh` 只拔 gh 一個。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：

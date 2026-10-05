@@ -1,7 +1,8 @@
 ---
 # `make list` 專用：印出「有哪些可裝的項目、這台機器上已經有哪些」。
 # tag 是 [list, never] —— `never` 保證一般的 install 絕不會跑到它（包含不帶 TAGS 的
-# 全裝），要跑只能明確 `--tags list`。整個檔唯讀（只有 stat 與 debug）。
+# 全裝），要跑只能明確 `--tags list`。整個檔唯讀（stat、debug，與選填的 `--version`
+# 查詢）。
 #
 # ---- 這個檔的角色 ------------------------------------------------------------
 # 布林開關 2026-07-28 移除後，沒有任何地方記著「這台機器該有什麼」—— 所以它印的 ✓／·
@@ -20,6 +21,10 @@
 #   1. 那批 .so 少了會讓 chromium 當場起不來（大聲），字型少了卻是**靜默**的：測試全綠、
 #      只有截圖裡的中文變成豆腐。偵測要對準看不見的那個。
 #   2. .so 的路徑帶 arch（/usr/lib/x86_64-linux-gnu/…），字型檔的不帶。
+#
+# 選填的 `version`：登記了就在 ✓ 底下多印一行 `<偵測路徑> <version>` 的輸出第一行。只給
+# 「有沒有」分不出好壞的項目用 —— 目前只有 gh：官方套件庫的新版與 Ubuntu universe 那支
+# 已經壞掉的 2.46 都是 /usr/bin/gh，光打勾看不出是哪一支。
 - name: 偵測已裝的項目
   ansible.builtin.stat:
     path: "{{ item.path }}"
@@ -67,6 +72,12 @@
       path: /usr/bin/glab
       desc: >-
         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
+    - tag: gh
+      dep: false
+      path: /usr/bin/gh
+      version: --version
+      desc: >-
+        gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）
     - tag: git-lfs
       dep: false
       path: /usr/bin/git-lfs
@@ -92,20 +103,41 @@
   loop_control:
     label: "{{ item.tag }}"
 
+# 只對「裝了、而且登記了 version」的項目跑。failed_when: false —— 版本讀不出來不該讓
+# 唯讀的 make list 失敗，頂多少印那一行。
+- name: 讀版本（有登記 version 的項目）
+  ansible.builtin.command:
+    argv: ["{{ item.item.path }}", "{{ item.item.version }}"]
+  register: _list_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: item.stat.exists and item.item.version is defined
+  loop: "{{ _list_probe.results }}"
+  loop_control:
+    label: "{{ item.item.tag }}"
+
+# 只 loop `_list_version.results` 一份：它是對 `_list_probe.results` 逐項跑出來的，每個
+# 元素同時帶著探測結果（r.item.stat / r.item.item）與版本輸出。被 when 跳過的元素沒有
+# stdout_lines，所以一律 `| default([])`。（同 uninstall.yml「移除完成」那段的單一 loop。）
 - name: 可安裝項目一覽
   ansible.builtin.debug:
     msg: |-
       可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
-      {% for r in _list_probe.results | rejectattr('item.dep') %}
+      {% for r in _list_version.results | rejectattr('item.item.dep') %}
 
-        {{ '✓' if r.stat.exists else '·' }} {{ r.item.tag.ljust(12) }} {{ r.item.desc }}
+        {{ '✓' if r.item.stat.exists else '·' }} {{ r.item.item.tag.ljust(12) }} {{ r.item.item.desc }}
+      {%- for v in (r.stdout_lines | default([]))[:1] %}
+
+                       {{ v }}
+      {%- endfor %}
       {%- endfor %}
 
 
       相依層 —— 上面的項目會自動帶進來，很少需要自己點：
-      {% for r in _list_probe.results | selectattr('item.dep') %}
+      {% for r in _list_version.results | selectattr('item.item.dep') %}
 
-        {{ '✓' if r.stat.exists else '·' }} {{ r.item.tag.ljust(12) }} {{ r.item.desc }}
+        {{ '✓' if r.item.stat.exists else '·' }} {{ r.item.item.tag.ljust(12) }} {{ r.item.item.desc }}
       {%- endfor %}
 
 
@@ -121,5 +153,5 @@
 
       移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
-      playwright / lazygit / glab / git-lfs / ffmpeg / unzip / base / build-tools）要手動，
+      playwright / lazygit / glab / gh / git-lfs / ffmpeg / unzip / base / build-tools）要手動，
       `make uninstall TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。

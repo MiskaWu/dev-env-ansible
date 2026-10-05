@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# GitHub CLI 官方 apt 套件庫（https://cli.github.com/packages）。由 roles/dev_env/tasks/gh.yml
+# 放的；內容等同官方安裝文件那一行
+#   deb [arch=… signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main
+# 只是寫成 deb822 —— Ubuntu 26.04 自己的 ubuntu.sources 就是這個格式。
+#
+# keyring 放 /etc/apt/keyrings（不是 trusted.gpg.d），只有用 Signed-By 指名它的來源才會
+# 拿它驗簽章 —— 這把第三方金鑰不會變成全系統都信任的金鑰。
+# 移除：purge gh 之後連同那把 keyring 一起刪（`make uninstall TAGS=gh` 會印出確切指令）。
+Types: deb
+URIs: https://cli.github.com/packages
+Suites: stable
+Components: main
+Architectures: {{ dev_env_arch }}
+Signed-By: /etc/apt/keyrings/githubcli-archive-keyring.gpg

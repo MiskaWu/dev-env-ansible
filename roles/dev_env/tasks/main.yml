@@ -83,6 +83,14 @@
   ansible.builtin.import_tasks: glab.yml
   tags: [tools, glab]
 
+# **唯一一個加第三方 apt 套件庫的項目**：Ubuntu universe 的 gh 2.46 被官方點名已經壞了
+# （GitHub 淘汰了它用的 API），只能用 cli.github.com 的官方套件庫（理由與做法見 gh.yml 檔頭）。
+# 不掛 base —— keyring 用 get_url 抓（Python 端發 HTTPS，不呼叫 curl），官方的 gh 套件
+# 自己 Depends: git。認證（token）不由這個 role 做，同 glab。
+- name: gh（GitHub CLI，官方 apt 套件庫）
+  ansible.builtin.import_tasks: gh.yml
+  tags: [tools, gh]
+
 # 不掛 playwright —— Playwright 錄影用它自己附的那支（只有 VP8／WebM），用不到系統的；
 # 需要系統 ffmpeg 的是專案把截圖合成 MP4 的那一步（理由見 ffmpeg.yml 檔頭）。
 - name: ffmpeg
