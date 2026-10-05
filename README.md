@@ -77,10 +77,10 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
-**apt 裝的（`podman` / `lazygit` / `glab` / `unzip` / `git-lfs` / `base` / `build-tools`）要手動**，指令會擋
-下來並告訴你怎麼做。理由不是懶：apt 套件是共同持有的，移除的連帶結果**取決於這台機器
-現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu` 與 `ubuntu-wsl` metapackage 一起帶走。
-同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
+**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `git-lfs` / `ffmpeg` / `unzip` /
+`base` / `build-tools`）要手動**，指令會擋下來並告訴你怎麼做。理由不是懶：apt 套件是共同
+持有的，移除的連帶結果**取決於這台機器現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu`
+與 `ubuntu-wsl` metapackage 一起帶走。同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
 
 ```bash
 apt-get -s purge --autoremove <套件名>    # 先看影響範圍，這步不會動到系統
@@ -171,6 +171,7 @@ dev-env-ansible/
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
         ├── glab.yml            # glab（GitLab CLI）            (tags: [tools, glab])
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
+        ├── ffmpeg.yml          # ffmpeg（合成 MP4）          (tags: [tools, ffmpeg])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── node.yml            # Node 官方 tarball → /usr/local/node   (tags: node)
@@ -208,6 +209,15 @@ go」沒辦法用 tag 組合表達。拆成兩個 playbook 之後，`--tags go` 
 是這一類整包。分類的判準是**這是誰的東西**：你自己會敲的掛 `tools`；別人的相依進
 `base.yml`（installer 要的）或 `build-tools.yml`（編譯工具鏈）。`build-essential` 屬後者
 —— 它不是你會敲的工具，是 Go 與 uv 的前置，所以掛在**它們的** tag 底下。
+
+**`ffmpeg` 屬前者，但常被問「Playwright 不是附了一支嗎？」** 附的那支
+（`~/.cache/ms-playwright/ffmpeg-<build>/ffmpeg-linux`）是錄影專用的閹割版，實測
+`-encoders` 只有 `png` 與 `libvpx`（VP8）、muxer 只有 `webm` / `image2`、沒有任何音訊
+encoder —— 要出 X / YouTube Shorts 吃的 MP4（H.264 + AAC）只能用系統的。走 apt：Ubuntu 的
+8.0.1 就帶 libx264 與內建 aac encoder，不必自己追靜態 build 的版本。**不掛 `playwright`**：
+Playwright 錄影用的是自己那支，需要系統 ffmpeg 的是專案的合成步驟。Recommends 照預設裝 ——
+關掉只少 8 個跟編碼無關的套件（藍光解密、PipeWire client 等，8.7MB / 178.8MB），不值得讓它
+成為唯一長得不一樣的 apt task（數據見 `ffmpeg.yml` 檔頭）。
 
 ## 首次設定
 
@@ -253,6 +263,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · lazygit      lazygit（git 的 TUI）
   · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
   · git-lfs      git-lfs（沒裝不會報錯 —— clone 拿到的是 pointer，commit 會把大檔直接塞進 git）
+  · ffmpeg       ffmpeg（合成 MP4：H.264 + AAC；Playwright 附的那支只有 VP8／WebM）
   · unzip        unzip（不少 release 只出 zip）
 
 相依層 —— 上面的項目會自動帶進來，很少需要自己點：
@@ -261,7 +272,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    base build-tools claude ffmpeg git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
 
 **4. 裝。**
@@ -394,8 +405,8 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
 | `rust.yml`（`~/.cargo/bin`） | `cargo` `rustc` `rustdoc` `rustfmt` `rustup` |
 
-apt 裝的（podman、lazygit、glab、unzip、git-lfs、base、build-tools、playwright 的 `.so`）本來
-就在 `/usr/bin`，不需要處理。
+apt 裝的（podman、lazygit、glab、unzip、git-lfs、ffmpeg、base、build-tools、playwright 的 `.so`）
+本來就在 `/usr/bin`，不需要處理。
 
 兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的
 東西（`npm i -g` 的 bin 在 `/usr/local/node/bin`、`go install` 的在 `~/go/bin`，那些不會
