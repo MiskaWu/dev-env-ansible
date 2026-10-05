@@ -237,6 +237,23 @@ _check-uninstall-tags: _ensure-ansible
 		echo "    apt-get -s purge --autoremove <套件名>    # 先看影響範圍，不會動到系統" >&2
 		echo "    sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行" >&2
 		echo >&2
+		# 加了第三方 apt 套件庫的項目（gh）還放了**這個 role 自己的**檔案：keyring 與來源檔。
+		# 所有權是我們的，所以要明確列出來；但生命週期綁在套件上 —— 得等人看過模擬、決定
+		# purge 之後才該拿掉 —— 所以列在這個手動分支，不進 uninstall.yml。路徑直接讀該項目
+		# task 檔裡 `dest: /etc/apt/…` 那幾行，不在這裡抄一份（同 ssh-host-rm 從
+		# IdentityFile 讀 key 路徑：印錯路徑，使用者會照著 rm）。
+		for t in $$manual; do
+			f="roles/dev_env/tasks/$$t.yml"
+			[ -f "$$f" ] || continue
+			own="$$(sed -n 's|^[[:space:]]*dest:[[:space:]]*\(/etc/apt/[^[:space:]]*\)[[:space:]]*$$|\1|p' "$$f" | paste -sd' ')"
+			[ -n "$$own" ] || continue
+			echo "$$t 另外加了第三方 apt 套件庫，下面這些檔是這個 role 放的。決定 purge 之後" >&2
+			echo "再一起拿掉（模擬完若決定不 purge，就留著 —— 那是 $$t 的更新來源）：" >&2
+			echo >&2
+			echo "    sudo rm $$own" >&2
+			echo "    sudo apt update" >&2
+			echo >&2
+		done
 		echo "套件名看 roles/dev_env/tasks/ 底下對應的檔案（那是唯一的事實來源）。" >&2
 		echo "可以自動移除的：$$known" >&2
 		exit 1

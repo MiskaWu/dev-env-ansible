@@ -13,9 +13,10 @@
 # 要加就拿出「在原始碼裡指得出它被呼叫」等級的證據（jq 就是這樣進來的，ripgrep 是這樣被
 # 擋掉的，見 CLAUDE.md）。
 #
-# 已移除 gnupg / lsb-release —— 兩者都只在「加第三方 apt repo」時才需要（gnupg 驗 repo
-# 簽章金鑰、lsb-release 拿 codename 組 sources.list）。現在全走 Ubuntu 內建源 + 官方
-# installer，沒有第三方 repo。apt 驗官方源用的是相依帶進來的 gpgv，不是 gnupg。
+# 已移除 gnupg / lsb-release —— 兩者都只在「加第三方 apt repo」時才可能需要（gnupg 把
+# ASCII 金鑰 dearmor 成 keyring、lsb-release 拿 codename 組 sources.list）。apt 驗簽章用的是
+# 相依帶進來的 gpgv，不是 gnupg。2026-10-05 有了第一個第三方 repo（gh.yml，GitHub CLI
+# 官方套件庫），兩者照樣用不到：官方給的就是二進位 keyring、suite 是固定的 `stable`。
 #
 # jq 是 2026-07-27 從選裝清單升上來的，兩個理由都是實測來的，不是「好用」：
 #
