@@ -440,6 +440,24 @@
     （跟模擬一致），重跑 changed=0；`ffmpeg -encoders` 有 `libx264` 與 `aac`；
     `testsrc=1080x1920:rate=30` + `sine` 編 2 秒 → ffprobe 看到 h264（High、yuv420p）與
     aac（LC）兩個串流、容器 mp4。apt 裝在 `/usr/bin`，不必 symlink、不碰 `profile.yml`。
+- **`TAGS=fonts-cjk`（2026-10-06 加）：Noto Sans CJK，走 apt，掛 `[tools, fonts-cjk]`。** 同樣為
+  hyaku-monogatari 加的：影片的字幕是 Playwright 裡的 canvas 畫的，日文版要給日本觀眾看。
+  - **起因是一個靜默的失敗**：專案原本寫死 `"Noto Sans TC"`，但機器上根本沒有這個 family，
+    實際畫的是 `playwright.yml` 裝的文泉驛。文泉驛有假名，日文不會變豆腐，但只有一種字形 ——
+    日文版的漢字是中文寫法，沒有任何東西會報錯。`fc-list :lang=ja family` 裝之前只列出
+    文泉驛三個變體。
+  - **不掛 `playwright`、不併進那邊的字型段**：e2e 只要「不是豆腐」，文泉驛 16MB 就夠；
+    這個是 1 個套件、下載 61MB、安裝後 91MB（`apt-get -s` 確認沒有 Depends / Recommends）。
+  - **不裝 `fonts-noto-cjk-extra`**：本體只有 Regular / Bold，extra 補另外五個字重（145MB 下載、
+    215MB 安裝）。canvas 要 900 時 fontconfig 給 Bold（`fc-match "Noto Sans CJK JP:weight=900"`
+    → Bold），看起來就是粗體，沒有缺字重的症狀。
+  - **family 對了還要語言標籤**：每個地區的 face 都帶其他地區的 `locl`，頁面 `lang="zh-Hant"`
+    時 `Noto Sans CJK JP` 照樣畫繁中字形、「、。」跑到字格中間。這要專案端設 `lang`（hyaku 是
+    `ctx.lang` 加文件的 lang，從時間軸帶），機器層管不到；記下來是因為它最容易被誤判成沒裝好。
+  - **實測（本機套用）**：`make install TAGS=fonts-cjk` → changed=1，重跑 changed=0；
+    `/usr/share/fonts/opentype/noto/` 有 Sans / Serif 各 Regular、Bold 四個 `.ttc`，
+    `fc-list :lang=ja` 多出 Sans / Sans Mono / Serif 各五個地區。hyaku 的日文靜態圖換成日文字形、
+    「、。」貼字格左下；中文版的「。」維持置中。`list.yml` 偵測 `NotoSansCJK-Regular.ttc`。
 - **`TAGS=gh`（2026-10-05 加）：GitHub 官方 CLI，走 GitHub 的官方 apt 套件庫，掛
   `[tools, gh]` —— 整個 repo 第一個（目前唯一一個）第三方 apt 套件庫。** 為了讓 Claude 查
   私有 repo 的 GitHub Actions 結果（`gh run list` / `gh run watch` / `gh run view --log-failed`）

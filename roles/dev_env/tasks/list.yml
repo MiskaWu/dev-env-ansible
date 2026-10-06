@@ -88,6 +88,11 @@
       path: /usr/bin/ffmpeg
       desc: >-
         ffmpeg（合成 MP4：H.264 + AAC；Playwright 附的那支只有 VP8／WebM）
+    - tag: fonts-cjk
+      dep: false
+      path: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+      desc: >-
+        Noto Sans CJK（日文用日文字形、繁中用繁中字形；playwright 的文泉驛只有一種字形）
     - tag: unzip
       dep: false
       path: /usr/bin/unzip
@@ -153,5 +158,5 @@
 
       移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
-      playwright / lazygit / glab / gh / git-lfs / ffmpeg / unzip / base / build-tools）要手動，
+      playwright / lazygit / glab / gh / git-lfs / ffmpeg / fonts-cjk / unzip / base / build-tools）要手動，
       `make uninstall TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。
