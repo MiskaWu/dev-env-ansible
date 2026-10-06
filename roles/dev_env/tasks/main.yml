@@ -97,6 +97,12 @@
   ansible.builtin.import_tasks: ffmpeg.yml
   tags: [tools, ffmpeg]
 
+# 不掛 playwright —— e2e 只要「中文不是豆腐」，playwright.yml 的文泉驛就夠；這個是要把
+# 畫面當成品給人看、需要日文用日文字形的專案才要（理由見 fonts-cjk.yml 檔頭）。
+- name: Noto Sans CJK
+  ansible.builtin.import_tasks: fonts-cjk.yml
+  tags: [tools, fonts-cjk]
+
 - name: Go
   ansible.builtin.import_tasks: go.yml
   tags: [go]

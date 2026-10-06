@@ -77,7 +77,7 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
-**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `unzip` /
+**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `fonts-cjk` / `unzip` /
 `base` / `build-tools`）要手動**，指令會擋下來並告訴你怎麼做。理由不是懶：apt 套件是共同
 持有的，移除的連帶結果**取決於這台機器現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu`
 與 `ubuntu-wsl` metapackage 一起帶走。同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
@@ -178,6 +178,7 @@ dev-env-ansible/
         ├── gh.yml              # gh（GitHub CLI，官方 apt 套件庫）  (tags: [tools, gh])
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
         ├── ffmpeg.yml          # ffmpeg（合成 MP4）          (tags: [tools, ffmpeg])
+        ├── fonts-cjk.yml       # Noto Sans CJK（分地區字形）  (tags: [tools, fonts-cjk])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── node.yml            # Node 官方 tarball → /usr/local/node   (tags: node)
@@ -224,6 +225,13 @@ encoder —— 要出 X / YouTube Shorts 吃的 MP4（H.264 + AAC）只能用系
 Playwright 錄影用的是自己那支，需要系統 ffmpeg 的是專案的合成步驟。Recommends 照預設裝 ——
 關掉只少 8 個跟編碼無關的套件（藍光解密、PipeWire client 等，8.7MB / 178.8MB），不值得讓它
 成為唯一長得不一樣的 apt task（數據見 `ffmpeg.yml` 檔頭）。
+
+**`fonts-cjk` 也屬前者，常被問「playwright 不是已經裝了中文字型？」** 那支文泉驛防的是
+「中文變豆腐」，它也有假名，所以日文不會變豆腐 —— 但只有一種字形，日文畫出來的漢字是
+中文寫法，日本人一眼看得出來。Noto Sans CJK 同一套設計分地區出字形（family 名稱帶 `JP` /
+`TC` / `SC` / `KR` / `HK`），給要把畫面當成品的專案用；跑 e2e 的機器不需要，所以**不掛
+`playwright`**。另外記一個坑：family 選對了還要給語言標籤，`lang="zh-Hant"` 的頁面裡
+`Noto Sans CJK JP` 照樣畫出繁中字形（理由見 `fonts-cjk.yml` 檔頭）。
 
 **`gh` 也屬前者，但它是唯一加了第三方 apt 套件庫的項目。** Ubuntu universe 有 gh（26.04 是
 2.46.0），可是 gh 官方的[安裝文件](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
@@ -295,6 +303,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · gh           gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）
   · git-lfs      git-lfs（沒裝不會報錯 —— clone 拿到的是 pointer，commit 會把大檔直接塞進 git）
   · ffmpeg       ffmpeg（合成 MP4：H.264 + AAC；Playwright 附的那支只有 VP8／WebM）
+  · fonts-cjk    Noto Sans CJK（日文用日文字形、繁中用繁中字形；playwright 的文泉驛只有一種字形）
   · unzip        unzip（不少 release 只出 zip）
 
 相依層 —— 上面的項目會自動帶進來，很少需要自己點：
@@ -303,7 +312,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude ffmpeg gh git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    base build-tools claude ffmpeg fonts-cjk gh git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
 
 `gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支

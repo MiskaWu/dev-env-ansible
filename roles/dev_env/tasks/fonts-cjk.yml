@@ -1,0 +1,37 @@
+---
+# Noto Sans CJK —— 日文、繁中、簡中、韓文各自用自己地區的字形。走 apt（main 的
+# fonts-noto-cjk，1 個套件、沒有 Depends / Recommends，下載 61MB、安裝後 91MB）。
+#
+# 為 hyaku-monogatari 加的（2026-10-06）：影片的字幕、台詞是 Playwright 裡的 canvas
+# 畫出來的，日文版要給日本觀眾看。跟 ffmpeg 同類 —— 別的 repo 的產出要用、不是這個 role
+# 任何 installer 的相依，所以放 tools，不進 base.yml。
+#
+# ---- playwright.yml 已經裝了文泉驛，為什麼還要這個 ------------------------------
+# 那邊防的是「中文變豆腐」，文泉驛正黑繁簡都涵蓋、也有假名，所以日文**不會**變豆腐 ——
+# 失敗形狀比豆腐更安靜：日文照樣畫得出來，只是漢字用的是中文字形。文泉驛是一套字型、
+# 一種字形，`lang="ja"` 也換不了；fontconfig 對 `:lang=ja` 查得到的也只有它
+# （2026-10-06 實測 `fc-list :lang=ja family` 只列出文泉驛三個變體）。
+# Noto Sans CJK 是同一套設計分地區出字形，family 名稱直接帶地區：
+# `Noto Sans CJK JP` / `TC` / `SC` / `KR` / `HK`，專案端照語言挑 family 就好。
+#
+# **family 對了還不夠，專案端還要給語言標籤**（2026-10-06 實測踩到）：每個地區的 face
+# 都帶有其他地區的 OpenType `locl`，瀏覽器照文字的語言套用。頁面是 `<html lang="zh-Hant">`
+# 時，`Noto Sans CJK JP` 畫出來的照樣是繁中字形，日文的「、。」也跑到字格正中間（日文應該
+# 貼左下）。所以專案端要同時指定 family 與 `lang`（canvas 是 `ctx.lang`，或文件的 lang）。
+# 這是專案的事、機器層管不到，記在這裡是因為「裝了 JP 字型卻還是中文字形」最容易被誤判成
+# 這個 task 沒裝好。
+#
+# **不掛 `playwright`**：跑 e2e 的機器只要「中文不是豆腐」，文泉驛的 16MB 就夠；
+# 這 91MB 是要把畫面當成品給人看的專案才需要（同 ffmpeg.yml 不掛 playwright 的理由）。
+#
+# ---- 不裝 fonts-noto-cjk-extra --------------------------------------------------
+# 本體只有 Regular 與 Bold 兩個字重；extra 補 Thin～Black 另外五個，下載 145MB、安裝後
+# 215MB。canvas 要 900 時會拿最接近的 Bold，看起來就是粗體，不會像只有單一字重的字型
+# 那樣被瀏覽器假加粗。沒有實際需要 Black 的畫面之前不裝 —— 判準同 playwright.yml 的字型段：
+# 指得出具體缺什麼才進來。
+- name: Install Noto Sans CJK (per-region glyphs)
+  become: true
+  ansible.builtin.apt:
+    name: fonts-noto-cjk
+    update_cache: true
+    cache_valid_time: 3600
