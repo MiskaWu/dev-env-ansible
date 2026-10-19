@@ -297,7 +297,7 @@
 # 工具是 role 放的那三樣（小工具、服務範本、下載的 tarball）。各 repo 註冊的那幾份
 # （~/actions-runner/<OWNER>-<REPO>）是**資料**，而且是活的：服務在跑、GitHub 那邊還登記著。
 # 這時拿掉範本，服務下次重啟就起不來、GitHub 上留一台永遠離線的 runner —— 所以**有註冊中的
-# runner 就拒絕**，請人先 `gha-runner rm`（要註冊碼，只能人從網頁拿，這裡替不了）。
+# runner 就拒絕**，請人先 `gha-runner rm`（要移除碼：gh 有權限時自動拿、否則人從網頁拿，這裡不替人決定）。
 # 不提供「DATA=1 連 runner 一起刪」：沒有註冊碼就只能刪目錄、GitHub 那邊清不掉，正是
 # 「看起來會替你做決定、其實做不完」的那種指令。
 - name: GitHub Actions 自架 runner
@@ -317,8 +317,8 @@
       ansible.builtin.fail:
         msg: >-
           這台還有註冊中的 runner：{{ _gha_registered.files | map(attribute='path') | map('dirname')
-          | map('basename') | join('、') }}。先逐一 `gha-runner rm OWNER/REPO <註冊碼>`
-          （`gha-runner ls` 看每一份對到哪個 repo；註冊碼在 repo 的 Settings → Actions → Runners →
+          | map('basename') | join('、') }}。先逐一 `gha-runner rm ORG` 或 `gha-runner rm OWNER/REPO`
+          （`gha-runner ls` 看每一份對到哪裡；移除碼沒給就用 gh 拿，拿不到在 Settings → Actions → Runners →
           選這台 → Remove），再來移除。
       when: _gha_registered.matched > 0
 

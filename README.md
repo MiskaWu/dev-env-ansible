@@ -162,10 +162,17 @@ systemd 使用者服務範本 `github-runner@.service`。**註冊是人的動作
 gh 的權杖拿不到，只能從網頁拿（repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 `--token`）：
 
 ```bash
-gha-runner add OWNER/REPO <註冊碼>   # 解開一份到 ~/actions-runner/OWNER-REPO、註冊、常駐
+gha-runner add sinshotgames          # 註冊到組織（建議）：組織裡的私人 repo 都能用，之後新開的不必再註冊
+gha-runner add OWNER/REPO            # 只註冊到一個 repo（個人帳號的 repo 只能這樣）
 gha-runner ls                        # 這台有哪些、服務在不在跑
-gha-runner status OWNER/REPO
-gha-runner rm OWNER/REPO <註冊碼>     # 註冊碼在同一頁選那台 → Remove
+gha-runner status sinshotgames
+gha-runner rm sinshotgames           # 停掉、從 GitHub 移除、刪掉這份
+```
+
+註冊碼／移除碼沒給就用 gh 拿（權杖要有組織的 Self-hosted runners 寫入權限）；拿不到就從網頁複製、接在指令最後：
+
+```bash
+gha-runner add sinshotgames <註冊碼>
 ```
 
 workflow 寫 `runs-on: [self-hosted, linux, x64]`。WSL 關著時 job 只是排隊等。**只接自己的私人 repo** ——
@@ -318,7 +325,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · rust         Rust stable + rustfmt / clippy（官方 rustup；專案版本由 rust-toolchain.toml 管）
   · playwright   headless 瀏覽器的系統相依（.so + 中文字型；Playwright 本身與瀏覽器歸專案端）
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
-  · gha-runner   GitHub Actions 自架 runner 2.338.0（私人 repo 的 CI 跑這台；註冊用 gha-runner add OWNER/REPO <註冊碼>）
+  · gha-runner   GitHub Actions 自架 runner 2.338.0（私人 repo 的 CI 跑這台；註冊用 gha-runner add ORG 或 OWNER/REPO）
   · lazygit      lazygit（git 的 TUI）
   · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
   · gh           gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）

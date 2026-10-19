@@ -3,26 +3,36 @@
 # gha-runner —— GitHub Actions 自架 runner 的管理小工具（dev-env-ansible 的 gha-runner 項目放的，
 # 別手改：下一次 `make install TAGS=gha-runner` 會蓋掉）。
 #
-#   gha-runner add OWNER/REPO <註冊碼>   解開一份 runner、註冊到那個 repo、裝成常駐服務並啟動
+#   gha-runner add ORG [註冊碼]          註冊到組織：組織裡的私人 repo 都能用（建議）
+#   gha-runner add OWNER/REPO [註冊碼]   只註冊到一個 repo（個人帳號的 repo 只能這樣）
 #   gha-runner ls                        這台有哪些 runner、服務在不在跑
-#   gha-runner status OWNER/REPO         服務狀態與最近的紀錄
-#   gha-runner rm OWNER/REPO <註冊碼>     停掉服務、從 repo 移除、刪掉這份 runner
+#   gha-runner status ORG|OWNER/REPO     服務狀態與最近的紀錄
+#   gha-runner rm ORG|OWNER/REPO [註冊碼]  停掉服務、從 GitHub 移除、刪掉這份 runner
 #
-# 註冊碼：repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token
-# （一小時內有效；rm 用的在同一頁選那台 runner → Remove）。只接自己的私人 repo。
+# 註冊碼（一小時內有效）：沒給就用 gh 去拿 —— gh 的權杖要有組織的「Self-hosted runners: Read and write」
+# （repo 的話是 repo 的「Administration: Read and write」）。拿不到就從網頁複製：組織或 repo 的
+# Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token（移除用的在同一頁選那台 → Remove）。
+# 只接自己的私人 repo；組織的 runner 預設不給公開 repo 用，別去打開。
 set -euo pipefail
 
 TARBALL={{ gha_runner_tarball | quote }}
 BASE="$HOME/actions-runner"
+NAME_RE='[A-Za-z0-9_.-]+'
 
 die() {
   echo "gha-runner: $*" >&2
   exit 1
 }
 
-# OWNER/REPO → 目錄名與服務的 instance 名（OWNER-REPO）
+# 目標檢查：ORG 或 OWNER/REPO
+check() {
+  [[ "${1:-}" =~ ^$NAME_RE(/$NAME_RE)?$ ]] ||
+    die "要寫成 ORG（例：sinshotgames）或 OWNER/REPO（例：MiskaWu/quarter-master），收到「${1:-}」"
+}
+
+# 目錄名與服務的 instance 名：ORG 或 OWNER-REPO
 id_of() {
-  [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "要寫成 OWNER/REPO（例：MiskaWu/quarter-master），收到「${1:-}」"
+  check "$1"
   echo "${1/\//-}"
 }
 
@@ -30,24 +40,43 @@ unit_of() {
   echo "github-runner@$1.service"
 }
 
+# 拿註冊碼／移除碼的 API：組織是 orgs/ORG/actions/runners，repo 是 repos/OWNER/REPO/actions/runners
+api_of() {
+  if [[ "$1" == */* ]]; then echo "repos/$1/actions/runners"; else echo "orgs/$1/actions/runners"; fi
+}
+
+# 沒給碼就用 gh 拿（$2 是 registration-token 或 remove-token）。碼只進變數、不印出來。
+token_for() {
+  local target="$1" kind="$2" given="${3:-}" t
+  if [[ -n "$given" ]]; then
+    echo "$given"
+    return
+  fi
+  command -v gh >/dev/null || die "沒給註冊碼、也找不到 gh：從網頁複製（見 gha-runner 的說明）"
+  t="$(gh api -X POST "$(api_of "$target")/$kind" --jq .token 2>/dev/null)" ||
+    die "gh 拿不到 $kind（權杖缺 Self-hosted runners／Administration 的寫入權限？）：從網頁複製，接在同一個指令的最後再跑一次"
+  [[ -n "$t" ]] || die "gh 回了空的 $kind"
+  echo "$t"
+}
+
 add() {
-  local repo="${1:-}" token="${2:-}" id dir
-  id="$(id_of "$repo")"
-  [[ -n "$token" ]] || die "要給註冊碼：gha-runner add $repo <註冊碼>"
+  local target="${1:-}" id dir token
+  id="$(id_of "$target")"
   [[ -f "$TARBALL" ]] || die "找不到 $TARBALL，先 make install TAGS=gha-runner"
+  token="$(token_for "$target" registration-token "${2:-}")"
   dir="$BASE/$id"
   if [[ ! -x "$dir/config.sh" ]]; then
     mkdir -p "$dir"
     tar xzf "$TARBALL" -C "$dir"
   fi
   # --replace：同名的舊註冊（例如重灌過這台）直接接手，不必先去網頁刪
-  (cd "$dir" && ./config.sh --unattended --replace --url "https://github.com/$repo" --token "$token" \
+  (cd "$dir" && ./config.sh --unattended --replace --url "https://github.com/$target" --token "$token" \
     --name "$(hostname)" --work _work)
   # job 的環境（runner 啟動時讀這兩個檔）：PATH 去掉 WSL 接進來的 Windows 路徑；AWS 設定檔指到 /dev/null
   tr ':' '\n' <<<"$PATH" | grep -v '^/mnt/' | paste -sd: >"$dir/.path"
   printf '%s\n' LANG=C.UTF-8 AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null >"$dir/.env"
   systemctl --user enable --now "$(unit_of "$id")"
-  echo "gha-runner: $repo 註冊好了，服務 $(unit_of "$id") 在跑"
+  echo "gha-runner: $target 註冊好了，服務 $(unit_of "$id") 在跑"
 }
 
 ls_() {
@@ -69,15 +98,15 @@ status() {
 }
 
 rm_() {
-  local repo="${1:-}" token="${2:-}" id dir
-  id="$(id_of "$repo")"
-  [[ -n "$token" ]] || die "要給註冊碼（repo 的 Settings → Actions → Runners → 選這台 → Remove）"
+  local target="${1:-}" id dir token
+  id="$(id_of "$target")"
   dir="$BASE/$id"
   [[ -d "$dir" ]] || die "沒有 $dir"
+  token="$(token_for "$target" remove-token "${2:-}")"
   systemctl --user disable --now "$(unit_of "$id")" 2>/dev/null || true
   (cd "$dir" && ./config.sh remove --token "$token")
   rm -rf "$dir"
-  echo "gha-runner: $repo 移除了"
+  echo "gha-runner: $target 移除了"
 }
 
 case "${1:-}" in
@@ -85,5 +114,5 @@ case "${1:-}" in
   ls) ls_ ;;
   status) status "${2:-}" ;;
   rm) rm_ "${2:-}" "${3:-}" ;;
-  *) sed -n '6,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '6,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

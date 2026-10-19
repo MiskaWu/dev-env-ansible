@@ -137,7 +137,7 @@
   tags: [podman]
 
 # 私人 repo 的 CI 跑在這台（理由見 gha-runner.yml 檔頭）。這個項目只放軟體；註冊是
-# `gha-runner add OWNER/REPO <註冊碼>`，註冊碼只能人從網頁拿。
+# `gha-runner add ORG`（組織，建議）或 `OWNER/REPO`；註冊碼沒給就用 gh 拿，拿不到從網頁複製。
 #
 # 不掛 base / build-tools：get_url + tar 就裝得起來。也不掛 podman / node / rust —— 那些是
 # 「某個 repo 的 workflow 要什麼」，不是 runner 自己的相依，由各 repo 的 workflow 說了算。

@@ -143,9 +143,11 @@
     uninstall **有註冊中的 runner 就拒絕**，請人先 `gha-runner rm`；不提供 DATA=1 連 runner 一起刪 ——
     取消註冊要註冊碼，只能人從網頁拿，沒有它只刪得掉目錄、GitHub 上會留一台永遠離線的 runner。
     在假 HOME 實測過三條路（有註冊就拒絕／沒有就只拿工具／DATA=1 連 tarball）。
-- **`gha-runner add OWNER/REPO <註冊碼>` 是裝在 PATH 上的小工具，不是 playbook（2026-10-19）。**
-  跟 ssh-host 一樣吃參數，但註冊碼一小時內就失效、要在使用者的 shell 裡當場用掉（gh 的 fine-grained
-  權杖拿不到，`POST …/actions/runners/registration-token` 回 403），包成 `make` 只是多一層要記的語法。
+- **`gha-runner add ORG｜OWNER/REPO` 是裝在 PATH 上的小工具，不是 playbook（2026-10-19）。**
+  跟 ssh-host 一樣吃參數，但註冊碼一小時內就失效、要當場用掉，包成 `make` 只是多一層要記的語法。
+  **建議註冊到組織**（sinshotgames）：個人帳號的 runner 只能綁單一 repo，組織的註冊一次，之後新開的私人 repo
+  都能用。註冊碼沒給就用 gh 拿（權杖要有組織的 Self-hosted runners 寫入權限；只綁個人帳號的 fine-grained
+  權杖拿不到、回 403），拿不到才從網頁複製。碼只進變數、不印出來。
   它寫的 `.path` 去掉 `/mnt/` 開頭（WSL 接進來的 Windows 路徑），`.env` 把 AWS 設定檔指到 `/dev/null`
   （推雲端只用 workflow 的 OIDC，碰不到 `~/.aws` 的長期身分）。tarball 直接放 `~/.cache` 底下、不另開
   資料夾：get_url 的目的資料夾必須已在，乾跑不會真的建資料夾，多一層就在 `make check` 假失敗。

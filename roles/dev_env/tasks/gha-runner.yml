@@ -2,8 +2,9 @@
 # GitHub Actions 的自架 runner —— 私人 repo 的 CI 跑在這台，不算 GitHub 的分鐘數。
 # 起因（2026-10-19）：帳號的雲端 runner 免費額度用完、預算是 0，job 連開跑都不開跑
 # （「recent account payments have failed or your spending limit needs to be increased」）。
-# 四個私人 repo（quarter-master、sinshot、ouin-fx、space-car）共用這一套，所以放在機器層，
-# 不是每個 repo 各放一支腳本。
+# 私人 repo 共用這一套，所以放在機器層，不是每個 repo 各放一支腳本。2026-10-19 起私人 repo 搬進組織
+# sinshotgames（aws-infra 的 docs/org-migration.md）：**runner 註冊在組織上，之後新開的私人 repo 不必再註冊**
+# （使用者：「避免我後續加專案進來都要重複做」）。
 #
 # ---- 這個項目只放軟體，註冊是使用者的動作 --------------------------------------
 # 放下去的三樣都是 role 獨佔的：
@@ -11,28 +12,28 @@
 #   - `gha-runner` 小工具 → ~/.local/bin/gha-runner（add／ls／status／rm）
 #   - systemd 使用者服務的範本 → ~/.config/systemd/user/github-runner@.service
 #
-# **註冊不在這裡**：註冊碼要 repo 的 admin、一小時內有效，gh 的 fine-grained 權杖拿不到
-# （`POST /actions/runners/registration-token` 回 403），只能人去網頁拿：
-# repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token。
-# 拿到之後 `gha-runner add OWNER/REPO <註冊碼>`。它吃參數又只能人跑，跟 ssh-host 同一類 ——
-# 但 ssh-host 是「寫一個設定檔」所以做成 playbook；這個要在註冊碼失效前、在使用者的
-# shell 裡跑，所以做成一支裝在 PATH 上的小工具。
+# **註冊不在這裡**：`gha-runner add ORG`（組織，建議）或 `gha-runner add OWNER/REPO`（個人帳號的 repo
+# 只能這樣）。註冊碼一小時內有效：沒給就用 gh 拿（`POST …/actions/runners/registration-token`，
+# 權杖要有組織的 Self-hosted runners 寫入權限 —— 只綁個人帳號的 fine-grained 權杖拿不到，回 403），
+# 拿不到就從網頁複製（Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token）。
+# 它吃參數、要在使用者的 shell 裡跑，跟 ssh-host 同一類 —— 但 ssh-host 是「寫一個設定檔」所以做成
+# playbook；這個是當場用掉的碼，所以做成一支裝在 PATH 上的小工具。
 #
-# ---- 一個 repo 一份 runner，是資料不是工具 -----------------------------------------
-# 個人帳號的 runner 只能註冊在單一 repo（共用 runner 要 organization），所以每個 repo 各解開
-# 一份到 ~/actions-runner/<OWNER>-<REPO>：裡面有註冊憑證（.runner / .credentials）與工作目錄
+# ---- 一個註冊一份 runner，是資料不是工具 ---------------------------------------
+# 個人帳號的 runner 只能註冊在單一 repo；組織的註冊一次就給組織裡所有私人 repo 用。每個註冊各解開
+# 一份到 ~/actions-runner/<ORG> 或 <OWNER>-<REPO>：裡面有註冊憑證（.runner / .credentials）與工作目錄
 # （_work，checkout 與編譯快取）。runner 會自己更新、換掉自己的 bin/，所以不能幾份共用同一個
 # 解開的目錄。這些目錄是**資料**：uninstall 不碰；還有註冊中的 runner 時直接拒絕移除
 # （先 `gha-runner rm`，不然留下一堆停不掉、範本又被刪掉的服務）。
 #
 # ---- 常駐 ----------------------------------------------------------------------
-# systemd 使用者服務（範本單元，%i = <OWNER>-<REPO>）+ linger：WSL 開著就在跑，不必登入。
+# systemd 使用者服務（範本單元，%i = <ORG> 或 <OWNER>-<REPO>）+ linger：WSL 開著就在跑，不必登入。
 # WSL 關著時 job 只是排隊等，不會失敗、也不會改用雲端的。linger 由 wsl-bootstrap 打開；這裡
 # 只檢查、不動（loginctl enable-linger 要 root，而且是「這台機器怎麼用」的決定）。
 #
 # ---- 安全 ----------------------------------------------------------------------
 # runner 用這個使用者的權限執行 workflow 裡的指令。**只接自己的私人 repo，絕對不要接公開
-# repo**：別人開的 PR 就能在這台電腦上跑程式。`gha-runner add` 寫的 .env 把 AWS 的設定檔指到
+# repo**：別人開的 PR 就能在這台電腦上跑程式。組織 runner 的預設群組本來就不給公開 repo 用，別去打開。`gha-runner add` 寫的 .env 把 AWS 的設定檔指到
 # /dev/null —— 推雲端用 workflow 自己 OIDC 換來的短期憑證，碰不到 ~/.aws 裡的長期身分。
 # PATH 用使用者當下的 PATH 去掉 /mnt/ 開頭的（WSL 接進來的 Windows 路徑，在 CI 裡只會撞名）。
 #
@@ -104,6 +105,6 @@
     msg: |-
       gha-runner 裝好了。每個要接的 repo 做一次：
         1. repo 的 Settings → Actions → Runners → New self-hosted runner，複製 config.sh 那行的 --token
-        2. gha-runner add OWNER/REPO <註冊碼>
+        2. gha-runner add ORG（組織，建議）或 gha-runner add OWNER/REPO；註冊碼沒給就用 gh 拿
       之後 workflow 寫 runs-on: [self-hosted, linux, {{ gha_runner_arch }}]。
       gha-runner ls 看這台有哪些；只接自己的私人 repo。

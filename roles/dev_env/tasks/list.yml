@@ -66,7 +66,7 @@
     - tag: gha-runner
       dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/gha-runner"
-      desc: "GitHub Actions 自架 runner {{ gha_runner_version }}（私人 repo 的 CI 跑這台；註冊用 gha-runner add OWNER/REPO <註冊碼>）"
+      desc: "GitHub Actions 自架 runner {{ gha_runner_version }}（私人 repo 的 CI 跑這台；註冊用 gha-runner add ORG 或 OWNER/REPO）"
     - tag: lazygit
       dep: false
       path: /usr/bin/lazygit
