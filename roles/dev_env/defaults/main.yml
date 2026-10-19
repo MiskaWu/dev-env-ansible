@@ -40,6 +40,18 @@ node_version: "24.18.0"
 # 專案要 pin 就放一份 rust-toolchain.toml，rustup 讀到會自動抓那個版本 —— 跟 GOTOOLCHAIN=auto
 # 同一個角色，機器層不需要第二個開關。
 
+# GitHub Actions 自架 runner（gha-runner.yml）。**釘版本、釘 SHA-256**，跟 node_version 一樣不支援
+# 'latest'：這是會拿到 repo 權限、在這台機器上跑任意 workflow 的程式，下載的那包必須是核對過的那包。
+# SHA-256 抄自 release 頁的 `<!-- BEGIN SHA linux-x64 -->` 那段，也等於 GitHub API 的 asset digest。
+#
+# 這裡只決定**第一次解開**哪一版：runner 之後會自己更新（GitHub 要求時下載新版、換掉自己的
+# bin/），已經註冊的那幾份不會因為改了這裡就換版。換版就改這三行，`make install TAGS=gha-runner`，
+# 之後新加的 repo 用新版。
+gha_runner_version: "2.338.0"
+gha_runner_sha256:
+  x64: af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
+  arm64: 628b4a7258487b80c1d3c221095a7ded349f5ae0175fd3dfab708d07428f041b
+
 # netavark 的 firewall driver —— **一律明寫，不吃發行版預設**。
 #
 # 為什麼不吃預設：netavark 的預設是「編譯期」決定的（上游 src/firewall/mod.rs 用

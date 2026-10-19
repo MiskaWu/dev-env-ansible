@@ -73,7 +73,7 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **必須點名要移除什麼。** 這是跟 `install` 最重要的不對稱：`make install` 不帶 `TAGS`
 是「全裝」，`make uninstall` 不帶 `TAGS` 是**拒絕**。沒有人該靠少打幾個字就把機器清空。
 
-**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node` / `rust`）。分界線是
+**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node` / `rust` / `gha-runner`）。分界線是
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
@@ -154,6 +154,25 @@ Windows 改 `config.ps1` 再重跑一次，那是為「建一台機器」設計�
 commit 的名字／信箱不歸這裡管，仍然是 `~/.gitconfig` 那份全域設定。公司 repo 要用不同
 身分，用 git 自己的 `includeIf`（按目錄切換）。
 
+## GitHub Actions 自架 runner：`TAGS=gha-runner`
+
+私人 repo 的 CI 跑在這台、不算 GitHub 的分鐘數（2026-10-19，雲端額度用完、預算是 0 時 job 根本不開跑）。
+`make install TAGS=gha-runner` 只放軟體：官方 runner tarball（釘版本、核對 SHA-256）、`~/.local/bin/gha-runner`、
+systemd 使用者服務範本 `github-runner@.service`。**註冊是人的動作** —— 註冊碼要 repo 的 admin、一小時內有效，
+gh 的權杖拿不到，只能從網頁拿（repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 `--token`）：
+
+```bash
+gha-runner add OWNER/REPO <註冊碼>   # 解開一份到 ~/actions-runner/OWNER-REPO、註冊、常駐
+gha-runner ls                        # 這台有哪些、服務在不在跑
+gha-runner status OWNER/REPO
+gha-runner rm OWNER/REPO <註冊碼>     # 註冊碼在同一頁選那台 → Remove
+```
+
+workflow 寫 `runs-on: [self-hosted, linux, x64]`。WSL 關著時 job 只是排隊等。**只接自己的私人 repo** ——
+runner 用這個使用者的權限跑 workflow，公開 repo 的 PR 就能在這台跑程式。job 的環境把 AWS 設定檔指到 `/dev/null`，
+推雲端只用 workflow 自己 OIDC 換來的短期憑證。各 repo 那幾份是資料：`make uninstall TAGS=gha-runner` 在還有註冊中的
+runner 時會拒絕，先逐一 `gha-runner rm`。
+
 ## 檔案結構
 
 ```
@@ -164,7 +183,7 @@ dev-env-ansible/
 ├── ssh-host.yml                # make ssh-host 的入口 —— 吃參數，所以也是獨立 playbook
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
-    ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、firewall driver）
+    ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、node_version、gha_runner_*、firewall driver）
     ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in、gh 的 apt 來源
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
@@ -183,6 +202,7 @@ dev-env-ansible/
         ├── python.yml          # uv                                   (tags: python)
         ├── node.yml            # Node 官方 tarball → /usr/local/node   (tags: node)
         ├── rust.yml            # rustup → stable + rustfmt / clippy    (tags: rust)
+        ├── gha-runner.yml      # GitHub Actions 自架 runner（軟體；註冊用 gha-runner add） (tags: gha-runner)
         ├── playwright.yml      # headless 瀏覽器的 .so + 中文字型    (tags: playwright)
         ├── podman.yml          # podman + .d drop-in                  (tags: podman)
         ├── uninstall.yml       # 反安裝：只碰 role 獨佔的路徑   (由 uninstall.yml 進入)
@@ -298,6 +318,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · rust         Rust stable + rustfmt / clippy（官方 rustup；專案版本由 rust-toolchain.toml 管）
   · playwright   headless 瀏覽器的系統相依（.so + 中文字型；Playwright 本身與瀏覽器歸專案端）
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
+  · gha-runner   GitHub Actions 自架 runner 2.338.0（私人 repo 的 CI 跑這台；註冊用 gha-runner add OWNER/REPO <註冊碼>）
   · lazygit      lazygit（git 的 TUI）
   · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
   · gh           gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）
@@ -312,7 +333,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude ffmpeg fonts-cjk gh git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    base build-tools claude ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
 
 `gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支
@@ -486,6 +507,7 @@ rm -rf node_modules && npm ci
 | 變數 | 預設 | 控制 |
 |---|---|---|
 | `go_version` | `latest` | `latest` **每次跑到 `go` 這個 tag 都查 go.dev**（會跟著上游走版），或 pin 如 `1.26.5` |
+| `gha_runner_version` / `gha_runner_sha256` | `2.338.0` 與 x64／arm64 各一個 SHA-256 | GitHub Actions runner 第一次解開哪一版（之後 runner 自己更新）。**釘版本、釘 checksum**，不支援 `latest` |
 | `podman_firewall_driver` | WSL 上 `iptables`，否則 `nftables` | netavark firewall driver。**一律明寫**，因為 netavark 的預設是編譯期決定的、換發行版就可能不同。可用 `iptables` / `nftables` / `firewalld` / `none`，或 `''` 表示完全不管 |
 
 **這個 role 只裝不卸。** 沒有「解除安裝」的目標，也刻意不做 —— 卸載是破壞性動作，不該由

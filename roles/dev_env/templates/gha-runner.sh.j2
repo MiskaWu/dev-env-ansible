@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# gha-runner —— GitHub Actions 自架 runner 的管理小工具（dev-env-ansible 的 gha-runner 項目放的，
+# 別手改：下一次 `make install TAGS=gha-runner` 會蓋掉）。
+#
+#   gha-runner add OWNER/REPO <註冊碼>   解開一份 runner、註冊到那個 repo、裝成常駐服務並啟動
+#   gha-runner ls                        這台有哪些 runner、服務在不在跑
+#   gha-runner status OWNER/REPO         服務狀態與最近的紀錄
+#   gha-runner rm OWNER/REPO <註冊碼>     停掉服務、從 repo 移除、刪掉這份 runner
+#
+# 註冊碼：repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token
+# （一小時內有效；rm 用的在同一頁選那台 runner → Remove）。只接自己的私人 repo。
+set -euo pipefail
+
+TARBALL={{ gha_runner_tarball | quote }}
+BASE="$HOME/actions-runner"
+
+die() {
+  echo "gha-runner: $*" >&2
+  exit 1
+}
+
+# OWNER/REPO → 目錄名與服務的 instance 名（OWNER-REPO）
+id_of() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "要寫成 OWNER/REPO（例：MiskaWu/quarter-master），收到「${1:-}」"
+  echo "${1/\//-}"
+}
+
+unit_of() {
+  echo "github-runner@$1.service"
+}
+
+add() {
+  local repo="${1:-}" token="${2:-}" id dir
+  id="$(id_of "$repo")"
+  [[ -n "$token" ]] || die "要給註冊碼：gha-runner add $repo <註冊碼>"
+  [[ -f "$TARBALL" ]] || die "找不到 $TARBALL，先 make install TAGS=gha-runner"
+  dir="$BASE/$id"
+  if [[ ! -x "$dir/config.sh" ]]; then
+    mkdir -p "$dir"
+    tar xzf "$TARBALL" -C "$dir"
+  fi
+  # --replace：同名的舊註冊（例如重灌過這台）直接接手，不必先去網頁刪
+  (cd "$dir" && ./config.sh --unattended --replace --url "https://github.com/$repo" --token "$token" \
+    --name "$(hostname)" --work _work)
+  # job 的環境（runner 啟動時讀這兩個檔）：PATH 去掉 WSL 接進來的 Windows 路徑；AWS 設定檔指到 /dev/null
+  tr ':' '\n' <<<"$PATH" | grep -v '^/mnt/' | paste -sd: >"$dir/.path"
+  printf '%s\n' LANG=C.UTF-8 AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null >"$dir/.env"
+  systemctl --user enable --now "$(unit_of "$id")"
+  echo "gha-runner: $repo 註冊好了，服務 $(unit_of "$id") 在跑"
+}
+
+ls_() {
+  local d id url
+  shopt -s nullglob
+  for d in "$BASE"/*/; do
+    id="$(basename "$d")"
+    [[ -f "$d/.runner" ]] || { echo "$id  （沒有註冊）"; continue; }
+    url="$(sed -n 's/.*"gitHubUrl": *"\([^"]*\)".*/\1/p' "$d/.runner" | head -n 1)"
+    echo "$id  $(systemctl --user is-active "$(unit_of "$id")" 2>/dev/null || true)  ${url:-?}"
+  done
+}
+
+status() {
+  local id
+  id="$(id_of "${1:-}")"
+  systemctl --user --no-pager status "$(unit_of "$id")" | head -n 5 || true
+  journalctl --user -u "$(unit_of "$id")" -n 15 --no-pager -o cat || true
+}
+
+rm_() {
+  local repo="${1:-}" token="${2:-}" id dir
+  id="$(id_of "$repo")"
+  [[ -n "$token" ]] || die "要給註冊碼（repo 的 Settings → Actions → Runners → 選這台 → Remove）"
+  dir="$BASE/$id"
+  [[ -d "$dir" ]] || die "沒有 $dir"
+  systemctl --user disable --now "$(unit_of "$id")" 2>/dev/null || true
+  (cd "$dir" && ./config.sh remove --token "$token")
+  rm -rf "$dir"
+  echo "gha-runner: $repo 移除了"
+}
+
+case "${1:-}" in
+  add) add "${2:-}" "${3:-}" ;;
+  ls) ls_ ;;
+  status) status "${2:-}" ;;
+  rm) rm_ "${2:-}" "${3:-}" ;;
+  *) sed -n '6,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

@@ -1,0 +1,109 @@
+---
+# GitHub Actions 的自架 runner —— 私人 repo 的 CI 跑在這台，不算 GitHub 的分鐘數。
+# 起因（2026-10-19）：帳號的雲端 runner 免費額度用完、預算是 0，job 連開跑都不開跑
+# （「recent account payments have failed or your spending limit needs to be increased」）。
+# 四個私人 repo（quarter-master、sinshot、ouin-fx、space-car）共用這一套，所以放在機器層，
+# 不是每個 repo 各放一支腳本。
+#
+# ---- 這個項目只放軟體，註冊是使用者的動作 --------------------------------------
+# 放下去的三樣都是 role 獨佔的：
+#   - 官方 tarball（釘版本、核對 SHA-256，見 defaults 的 gha_runner_*）→ ~/.cache/actions-runner-linux-<arch>-<版本>.tar.gz
+#   - `gha-runner` 小工具 → ~/.local/bin/gha-runner（add／ls／status／rm）
+#   - systemd 使用者服務的範本 → ~/.config/systemd/user/github-runner@.service
+#
+# **註冊不在這裡**：註冊碼要 repo 的 admin、一小時內有效，gh 的 fine-grained 權杖拿不到
+# （`POST /actions/runners/registration-token` 回 403），只能人去網頁拿：
+# repo 的 Settings → Actions → Runners → New self-hosted runner，config.sh 那行的 --token。
+# 拿到之後 `gha-runner add OWNER/REPO <註冊碼>`。它吃參數又只能人跑，跟 ssh-host 同一類 ——
+# 但 ssh-host 是「寫一個設定檔」所以做成 playbook；這個要在註冊碼失效前、在使用者的
+# shell 裡跑，所以做成一支裝在 PATH 上的小工具。
+#
+# ---- 一個 repo 一份 runner，是資料不是工具 -----------------------------------------
+# 個人帳號的 runner 只能註冊在單一 repo（共用 runner 要 organization），所以每個 repo 各解開
+# 一份到 ~/actions-runner/<OWNER>-<REPO>：裡面有註冊憑證（.runner / .credentials）與工作目錄
+# （_work，checkout 與編譯快取）。runner 會自己更新、換掉自己的 bin/，所以不能幾份共用同一個
+# 解開的目錄。這些目錄是**資料**：uninstall 不碰；還有註冊中的 runner 時直接拒絕移除
+# （先 `gha-runner rm`，不然留下一堆停不掉、範本又被刪掉的服務）。
+#
+# ---- 常駐 ----------------------------------------------------------------------
+# systemd 使用者服務（範本單元，%i = <OWNER>-<REPO>）+ linger：WSL 開著就在跑，不必登入。
+# WSL 關著時 job 只是排隊等，不會失敗、也不會改用雲端的。linger 由 wsl-bootstrap 打開；這裡
+# 只檢查、不動（loginctl enable-linger 要 root，而且是「這台機器怎麼用」的決定）。
+#
+# ---- 安全 ----------------------------------------------------------------------
+# runner 用這個使用者的權限執行 workflow 裡的指令。**只接自己的私人 repo，絕對不要接公開
+# repo**：別人開的 PR 就能在這台電腦上跑程式。`gha-runner add` 寫的 .env 把 AWS 的設定檔指到
+# /dev/null —— 推雲端用 workflow 自己 OIDC 換來的短期憑證，碰不到 ~/.aws 裡的長期身分。
+# PATH 用使用者當下的 PATH 去掉 /mnt/ 開頭的（WSL 接進來的 Windows 路徑，在 CI 裡只會撞名）。
+#
+# 不掛 base：下載用 get_url、解開用 tar（Ubuntu base 就有）；小工具本身只用 coreutils 與 sed。
+
+# 官方的拼法是 x64 / arm64（同 node.yml 那條註解：別拿 detect.yml 的 Debian 風格 amd64）。
+- name: Set runner arch
+  ansible.builtin.set_fact:
+    gha_runner_arch: "{{ 'arm64' if dev_env_arch == 'arm64' else 'x64' }}"
+    gha_runner_tarball: >-
+      {{ ansible_facts.env.HOME }}/.cache/actions-runner-linux-{{
+      'arm64' if dev_env_arch == 'arm64' else 'x64' }}-{{ gha_runner_version }}.tar.gz
+
+# 檔案已在且 checksum 對得上，get_url 就不重下（冪等）；對不上就失敗，不會留下半包。
+# 直接放 ~/.cache 底下、不另開資料夾：get_url 的目的資料夾必須已經在，而乾跑（make check）
+# 不會真的建資料夾，多一層就讓乾跑在這裡假失敗（同 node.yml 解壓那條的假陽性）。
+- name: Download runner {{ gha_runner_version }}
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/actions/runner/releases/download/v{{ gha_runner_version
+      }}/actions-runner-linux-{{ gha_runner_arch }}-{{ gha_runner_version }}.tar.gz
+    checksum: "sha256:{{ gha_runner_sha256[gha_runner_arch] }}"
+    dest: "{{ gha_runner_tarball }}"
+    mode: "0644"
+
+- name: Install gha-runner
+  ansible.builtin.template:
+    src: gha-runner.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.local/bin/gha-runner"
+    mode: "0755"
+
+- name: Create ~/.config/systemd/user
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.config/systemd/user"
+    state: directory
+    mode: "0755"
+
+- name: Install github-runner@.service
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: "{{ ansible_facts.env.HOME }}/.config/systemd/user/github-runner@.service"
+    mode: "0644"
+  register: _gha_runner_unit
+
+# 範本改了才 reload；已經在跑的 runner 不重啟（正在跑的 job 會被砍），下次重啟才套用。
+- name: Reload user systemd
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true
+  when: _gha_runner_unit.changed
+
+- name: Check linger
+  ansible.builtin.command:
+    argv: [loginctl, show-user, "{{ ansible_facts.user_id }}", -p, Linger, --value]
+  register: _gha_runner_linger
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Linger 沒開
+  ansible.builtin.debug:
+    msg: >-
+      這個使用者沒有 linger：登出（或 WSL 沒有開著的終端機）時 runner 會跟著停。
+      要常駐就 `sudo loginctl enable-linger {{ ansible_facts.user_id }}`。
+  when: (_gha_runner_linger.stdout | default('') | trim) != 'yes'
+
+- name: 下一步
+  ansible.builtin.debug:
+    msg: |-
+      gha-runner 裝好了。每個要接的 repo 做一次：
+        1. repo 的 Settings → Actions → Runners → New self-hosted runner，複製 config.sh 那行的 --token
+        2. gha-runner add OWNER/REPO <註冊碼>
+      之後 workflow 寫 runs-on: [self-hosted, linux, {{ gha_runner_arch }}]。
+      gha-runner ls 看這台有哪些；只接自己的私人 repo。

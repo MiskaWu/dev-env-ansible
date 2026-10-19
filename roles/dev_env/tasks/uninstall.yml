@@ -293,6 +293,61 @@
           - path: "{{ ansible_facts.env.HOME }}/.cargo/credentials.toml"
             what: registry 的 token —— DATA=1 也不會動
 
+# ---- GitHub Actions 自架 runner -------------------------------------------------
+# 工具是 role 放的那三樣（小工具、服務範本、下載的 tarball）。各 repo 註冊的那幾份
+# （~/actions-runner/<OWNER>-<REPO>）是**資料**，而且是活的：服務在跑、GitHub 那邊還登記著。
+# 這時拿掉範本，服務下次重啟就起不來、GitHub 上留一台永遠離線的 runner —— 所以**有註冊中的
+# runner 就拒絕**，請人先 `gha-runner rm`（要註冊碼，只能人從網頁拿，這裡替不了）。
+# 不提供「DATA=1 連 runner 一起刪」：沒有註冊碼就只能刪目錄、GitHub 那邊清不掉，正是
+# 「看起來會替你做決定、其實做不完」的那種指令。
+- name: GitHub Actions 自架 runner
+  tags: [gha-runner]
+  block:
+    - name: 找註冊中的 runner（~/actions-runner/*/.runner）
+      ansible.builtin.find:
+        paths: "{{ ansible_facts.env.HOME }}/actions-runner"
+        patterns: .runner
+        hidden: true
+        recurse: true
+        depth: 2
+      register: _gha_registered
+      check_mode: false
+
+    - name: 還有註冊中的 runner 就停下來
+      ansible.builtin.fail:
+        msg: >-
+          這台還有註冊中的 runner：{{ _gha_registered.files | map(attribute='path') | map('dirname')
+          | map('basename') | join('、') }}。先逐一 `gha-runner rm OWNER/REPO <註冊碼>`
+          （`gha-runner ls` 看每一份對到哪個 repo；註冊碼在 repo 的 Settings → Actions → Runners →
+          選這台 → Remove），再來移除。
+      when: _gha_registered.matched > 0
+
+    - name: 移除 gha-runner 與服務範本
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ansible_facts.env.HOME }}/.local/bin/gha-runner"
+        - "{{ ansible_facts.env.HOME }}/.config/systemd/user/github-runner@.service"
+      register: _gha_removed
+
+    - name: Reload user systemd
+      ansible.builtin.systemd_service:
+        scope: user
+        daemon_reload: true
+      when: _gha_removed.changed
+
+    - name: GitHub Actions 自架 runner —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['gha-runner'] }}"
+        _uninstall_data: "{{ _uninstall_data + _gha_data }}"
+      vars:
+        _gha_data:
+          - path: >-
+              {{ ansible_facts.env.HOME }}/.cache/actions-runner-linux-{{
+              'arm64' if dev_env_arch == 'arm64' else 'x64' }}-{{ gha_runner_version }}.tar.gz
+            what: 下載的 runner tarball（純快取，重裝會再下載）
+
 # ---- 資料目錄的統一處置 ------------------------------------------------------
 # 到這裡工具已經移除完畢。剩下的是「資料」：預設只報告，DATA=1 才真的刪。
 - name: 檢查資料目錄還在不在

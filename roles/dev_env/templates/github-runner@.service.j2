@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# GitHub Actions 自架 runner 的服務範本（gha-runner.yml）。%i = OWNER-REPO，一個 repo 一份，
+# 由 `gha-runner add` 啟用。停止的設定照 runner 官方 svc.sh：只送 SIGTERM 給主程式、
+# 給正在跑的 job 五分鐘收尾。
+[Unit]
+Description=GitHub Actions runner (%i)
+After=network-online.target
+ConditionPathExists=%h/actions-runner/%i/.runner
+
+[Service]
+WorkingDirectory=%h/actions-runner/%i
+ExecStart=%h/actions-runner/%i/run.sh
+Restart=always
+RestartSec=10
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=default.target

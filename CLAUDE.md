@@ -137,6 +137,18 @@
       `dest:` 行，所以 `gh.yml` 註解裡提到的路徑不會被誤印。之後別的項目也加了套件庫，同一段
       自動涵蓋，不必改 Makefile。
     - `~/.config/gh`（token）不在清單裡，同 `~/.claude` —— 是使用者的資料。
+  - **gha-runner 是第一個「工具裝好、資料還活著」的項目（2026-10-19）。** 工具是 role 放的三樣
+    （`~/.local/bin/gha-runner`、`github-runner@.service` 範本、`~/.cache` 裡的 tarball），各 repo 註冊的
+    `~/actions-runner/<OWNER>-<REPO>` 是資料，而且**是活的**：服務在跑、GitHub 那邊還登記著。所以
+    uninstall **有註冊中的 runner 就拒絕**，請人先 `gha-runner rm`；不提供 DATA=1 連 runner 一起刪 ——
+    取消註冊要註冊碼，只能人從網頁拿，沒有它只刪得掉目錄、GitHub 上會留一台永遠離線的 runner。
+    在假 HOME 實測過三條路（有註冊就拒絕／沒有就只拿工具／DATA=1 連 tarball）。
+- **`gha-runner add OWNER/REPO <註冊碼>` 是裝在 PATH 上的小工具，不是 playbook（2026-10-19）。**
+  跟 ssh-host 一樣吃參數，但註冊碼一小時內就失效、要在使用者的 shell 裡當場用掉（gh 的 fine-grained
+  權杖拿不到，`POST …/actions/runners/registration-token` 回 403），包成 `make` 只是多一層要記的語法。
+  它寫的 `.path` 去掉 `/mnt/` 開頭（WSL 接進來的 Windows 路徑），`.env` 把 AWS 設定檔指到 `/dev/null`
+  （推雲端只用 workflow 的 OIDC，碰不到 `~/.aws` 的長期身分）。tarball 直接放 `~/.cache` 底下、不另開
+  資料夾：get_url 的目的資料夾必須已在，乾跑不會真的建資料夾，多一層就在 `make check` 假失敗。
 - **`make ssh-host HOST=<網域>`：git host 的 SSH 設定，寫 `~/.ssh/config.d/`，不碰
   `~/.ssh/config` 的既有內容（2026-08-05 加）。** 界線是**時間，不是主題** —— 「SSH keys
   不在這個 role」那條仍然成立，但它指的是**開機那一組**（github.com / gitlab.com，key 得

@@ -63,6 +63,10 @@
       desc: >-
         rootless Podman + DOCKER_HOST（firewall driver:
         {{ podman_firewall_driver | default('', true) | ternary(podman_firewall_driver, '發行版預設') }}）
+    - tag: gha-runner
+      dep: false
+      path: "{{ ansible_facts.env.HOME }}/.local/bin/gha-runner"
+      desc: "GitHub Actions 自架 runner {{ gha_runner_version }}（私人 repo 的 CI 跑這台；註冊用 gha-runner add OWNER/REPO <註冊碼>）"
     - tag: lazygit
       dep: false
       path: /usr/bin/lazygit
@@ -156,7 +160,7 @@
       相依是自動的：TAGS=python 會把 base 與 build-tools 一起帶進來，任何會影響 PATH
       的項目也都會順便更新 ~/.profile —— 不必自己列。
 
-      移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust）——
+      移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust / gha-runner）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
       playwright / lazygit / glab / gh / git-lfs / ffmpeg / fonts-cjk / unzip / base / build-tools）要手動，
       `make uninstall TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。
