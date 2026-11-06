@@ -524,11 +524,8 @@ rm -rf node_modules && npm ci
 | `gha_runner_version` / `gha_runner_sha256` | `2.338.0` 與 x64／arm64 各一個 SHA-256 | GitHub Actions runner 第一次解開哪一版（之後 runner 自己更新）。**釘版本、釘 checksum**，不支援 `latest` |
 | `podman_firewall_driver` | WSL 上 `iptables`，否則 `nftables` | netavark firewall driver。**一律明寫**，因為 netavark 的預設是編譯期決定的、換發行版就可能不同。可用 `iptables` / `nftables` / `firewalld` / `none`，或 `''` 表示完全不管 |
 
-**這個 role 只裝不卸。** 沒有「解除安裝」的目標，也刻意不做 —— 卸載是破壞性動作，不該由
-每次安裝順手跑一遍。要它真的從機器上消失是手動的事（`sudo apt purge --autoremove <pkg>`）。
-動手前先 `apt-get -s purge --autoremove <pkg>` 看一次影響範圍，發行版自帶的套件尤其要看
-（例如 `tmux` 是 Ubuntu WSL image 內建，purge 它會連 `byobu` 與 `ubuntu-wsl` metapackage
-一起拔掉）。
+**安裝不會順手卸載。** `make install` 只裝不移除：卸載是破壞性動作，不該由每次安裝順手跑一遍。
+要移除就明確點名跑 `make uninstall TAGS=<項目>`；apt 裝的項目要手動，做法見「反安裝」。
 
 **實測體積**（讓取捨有依據）：`build-essential` 260MB / 43 個套件，跟 Go 的 269MB、
 Claude Code 的 263MB 同級 —— 它不是異常值。相對地整份 CLI 小工具只有約 24MB。
@@ -536,3 +533,7 @@ Claude Code 的 263MB 同級 —— 它不是異常值。相對地整份 CLI 小
 而多數時候你不必自己判斷，`TAGS=go` / `TAGS=python` 會替你帶進來。
 
 （SSH keys / git 身分的設定在 `wsl-bootstrap` 的 `config.ps1`，不在這裡。）
+
+## 授權
+
+[MIT](LICENSE)
