@@ -15,7 +15,7 @@
 #      `make uninstall` 不帶 TAGS 是「拒絕」—— 這個指令沒有「全砍」這個意思，
 #      也不該有人能靠少打幾個字得到它。
 #
-#   2. **只碰 role 獨佔的路徑**（/usr/local/go、/usr/local/node、~/.local/share/claude、
+#   2. **只碰 role 獨佔的路徑**（/usr/local/go、/usr/local/node、~/.local/share/claude、~/.codex/packages/standalone、
 #      ~/.local/bin/uv、~/.rustup…）。這些整包是我們放的，刪掉不牽動任何別的東西 —— 這正是
 #      它們能自動化、而 apt 套件不能的原因。
 #
@@ -157,6 +157,38 @@
         _claude_keep:
           - path: "{{ ansible_facts.env.HOME }}/.claude"
             what: 設定、專案紀錄、hooks、memory —— 你的資料，DATA=1 也不會動
+
+# ---- Codex CLI ---------------------------------------------------------------
+# ~/.codex 跟 ~/.cargo 同一種「混住」，但這棵切法更單純：packages/standalone 整包是官方
+# installer 放的工具本體，其餘（auth.json 登入憑證、sessions 對話紀錄、config.toml、
+# generated_images）都是你的資料，DATA=1 也不動，同 ~/.claude。
+- name: Codex CLI
+  tags: [codex]
+  block:
+    # ~/.local/bin/codex 是 symlink，指向 packages/standalone/current 底下。兩個都要移除，
+    # 理由同 Claude：只刪一邊不是留下沒人管的本體，就是留下 dangling symlink。
+    - name: 移除 Codex（入口與 packages/standalone）
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ansible_facts.env.HOME }}/.local/bin/codex"
+        - "{{ ansible_facts.env.HOME }}/.codex/packages/standalone"
+
+    - name: 移除 Codex 的 /usr/local/bin symlink
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/bin/codex
+        state: absent
+
+    - name: Codex —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['codex'] }}"
+        _uninstall_keep: "{{ _uninstall_keep + _codex_keep }}"
+      vars:
+        _codex_keep:
+          - path: "{{ ansible_facts.env.HOME }}/.codex"
+            what: 登入憑證、對話紀錄、設定、生成的圖 —— 你的資料，DATA=1 也不會動
 
 # ---- Python（uv）-------------------------------------------------------------
 - name: Python（uv）

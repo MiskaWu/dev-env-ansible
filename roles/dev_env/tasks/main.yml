@@ -9,7 +9,7 @@
 # ---- 相依關係用 tag 表達 -----------------------------------------------------
 # 一個 task 檔要成為某個目標的前置，就把那個目標的 tag 也掛上去。兩個現役例子：
 #
-#   base.yml        [base, claude, python, rust]     ← claude / uv / rustup 的 installer 要 curl
+#   base.yml        [base, claude, codex, python, rust]  ← claude / codex / uv / rustup 的 installer 要 curl
 #   build-tools.yml [build-tools, go, python, rust]  ← Go 的 cgo、uv 的 C extension、rustc 的
 #                                                       linker（cc）要編譯工具鏈
 #
@@ -36,9 +36,9 @@
 
 # ---- 相依層：不會單獨去點，靠上面的 tag 被帶進來 -----------------------------
 # 也可以單獨要（`make install TAGS=base` / `TAGS=build-tools`），偶爾有用。
-- name: 基礎套件（claude / uv / rustup 的 installer 相依）
+- name: 基礎套件（claude / codex / uv / rustup 的 installer 相依）
   ansible.builtin.import_tasks: base.yml
-  tags: [base, claude, python, rust]
+  tags: [base, claude, codex, python, rust]
 
 # rust 掛在這裡不是「可能會編 C」：rustc 連結任何程式都拿 cc 當 linker driver，
 # 連 hello world 都要（證據見 rust.yml 檔頭與 CLAUDE.md）。
@@ -50,6 +50,12 @@
 - name: Claude Code
   ansible.builtin.import_tasks: claude.yml
   tags: [claude]
+
+# 官方獨立安裝程式裝到 ~/.local/bin，釘版本（理由見 codex.yml 檔頭）。
+# 相依掛在上面的 base（installer 要 curl）；不掛 node —— 獨立安裝不需要 Node。
+- name: Codex CLI
+  ansible.builtin.import_tasks: codex.yml
+  tags: [codex]
 
 # ---- CLI 小工具：一個工具一個檔，各自掛 [tools, <自己>] -----------------------
 # 兩種叫法都成立：`TAGS=lazygit` 只裝那一個，`TAGS=tools` 是「這一類整包」。
@@ -154,7 +160,7 @@
 # `make facts` 從唯讀變成會改 ~/.profile。
 - name: ~/.profile 環境設定
   ansible.builtin.import_tasks: profile.yml
-  tags: [profile, claude, go, python, node, rust, podman, gha-runner]
+  tags: [profile, claude, codex, go, python, node, rust, podman, gha-runner]
 
 # 註：SSH keys 與 git 身分不在這個 role —— 已移到 wsl-bootstrap 的 provision.sh
 # （bring-up 就備好，且 key 得先在才能 clone 私有 repo）。這個 role 只管軟體。

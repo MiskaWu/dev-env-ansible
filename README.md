@@ -47,7 +47,7 @@ make check   TAGS=podman        # 乾跑預覽同一件事
 **刻意沒有隱藏的預設值**。要只裝 Claude 就明確寫 `TAGS=claude`。
 
 **相依用 tag 表達，不是布林運算式。** `base.yml` 在 `main.yml` 掛
-`[base, claude, python, rust]`、`build-tools.yml` 掛 `[build-tools, go, python, rust]`，於是
+`[base, claude, codex, python, rust]`、`build-tools.yml` 掛 `[build-tools, go, python, rust]`，於是
 `--tags python` 自動把兩者都帶進來。多一個需要編譯器的東西只要在它的 import 多掛一個 tag
 —— Rust 加進來時就是這樣，沒有改任何運算式。
 
@@ -73,8 +73,8 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **必須點名要移除什麼。** 這是跟 `install` 最重要的不對稱：`make install` 不帶 `TAGS`
 是「全裝」，`make uninstall` 不帶 `TAGS` 是**拒絕**。沒有人該靠少打幾個字就把機器清空。
 
-**只支援這個 role 獨佔擁有的項目**（`claude` / `go` / `python` / `node` / `rust` / `gha-runner`）。分界線是
-**所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、
+**只支援這個 role 獨佔擁有的項目**（`claude` / `codex` / `go` / `python` / `node` / `rust` / `gha-runner`）。分界線是
+**所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、`~/.codex/packages/standalone`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
 **apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `fonts-cjk` / `unzip` /
@@ -103,6 +103,10 @@ sudo apt purge --autoremove <套件名>      # 確認沒有誤傷再執行
 `registry/`、`git/` 兩個快取與 `cargo install` 的二進位（跟 Go 的 `~/go/bin`、uv 的
 `uv tool` 同一個待遇）；`config.toml` / `credentials.toml` 跟 `~/.claude` 一樣永遠保留。
 所以**不用 `rustup self uninstall`** —— 它會把整個 `~/.cargo` 連設定與 token 一起刪掉。
+
+**Codex 的 `~/.codex` 也是混住的，但切法更單純。** `packages/standalone` 整包是官方 installer
+放的工具本體，直接刪；其餘（`auth.json` 登入憑證、`sessions` 對話紀錄、`config.toml`、
+`generated_images`）都是你的資料，跟 `~/.claude` 一樣，`DATA=1` 也不動。
 
 **沒有對稱的 `uninstall-check`，這是刻意的。** ansible 的 `--check` 對移除給的是**假的
 安全感**：它只會說「這個 task 會 changed」，不會說 purge 某個套件會連帶帶走誰 —— 那個
@@ -190,14 +194,15 @@ dev-env-ansible/
 ├── ssh-host.yml                # make ssh-host 的入口 —— 吃參數，所以也是獨立 playbook
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
-    ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、node_version、gha_runner_*、firewall driver）
+    ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、node_version、codex_version、gha_runner_*、firewall driver）
     ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in、gh 的 apt 來源
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
-        ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, python, rust])
+        ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, codex, python, rust])
         ├── build-tools.yml     # build-essential   (tags: [build-tools, go, python, rust])
         ├── claude.yml          # Claude Code（native installer）      (tags: claude)
+        ├── codex.yml           # Codex CLI（官方獨立安裝程式，釘版本）  (tags: codex)
         ├── unzip.yml           # unzip                        (tags: [tools, unzip])
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
         ├── glab.yml            # glab（GitLab CLI）            (tags: [tools, glab])
@@ -215,7 +220,7 @@ dev-env-ansible/
         ├── uninstall.yml       # 反安裝：只碰 role 獨佔的路徑   (由 uninstall.yml 進入)
         ├── ssh-host.yml        # ~/.ssh/config.d 的 drop-in      (由 ssh-host.yml 進入)
         └── profile.yml         # ~/.profile 單一 managed block
-                                #  (tags: [profile, claude, go, python, node, rust, podman])
+                                #  (tags: [profile, claude, codex, go, python, node, rust, podman])
 ```
 
 **`ssh-host` 也是獨立 playbook，但理由跟 uninstall 不同：它吃參數。** site.yml 那邊每個
@@ -231,7 +236,7 @@ go」沒辦法用 tag 組合表達。拆成兩個 playbook 之後，`--tags go` 
 所以 `make uninstall TAGS=podman` 認得出那是「apt 裝的、要手動」而不是「打錯字」）。
 
 **相依關係就寫在 `main.yml` 的 tag 上。** 前兩個是相依層 —— `base.yml` 掛
-`[base, claude, python, rust]`（那三個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
+`[base, claude, codex, python, rust]`（那四個都要 `curl` 跑官方 installer）、`build-tools.yml` 掛
 `[build-tools, go, python, rust]`。所以 `--tags python` 會自動把兩者都帶進來。`go.yml` 沒掛
 `base` 是因為它走 ansible 的 `get_url`，不呼叫 `curl` 二進位。`rust` 掛 `build-tools` 的
 理由比另外兩個硬：Go / uv 是「碰到 cgo / C extension 才要」，rustc 是**連 hello world 都要**
@@ -319,6 +324,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
 
   · claude       Claude Code —— 這個 repo 的存在理由
+  · codex        Codex CLI 0.167.0（官方獨立安裝程式，釘版本；裝完要自己 codex login）
   · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
   · python       uv（自己也管 Python 版本，所以不需要 pyenv）
   · node         Node.js 24.18.0 LTS + npm（官方 tarball，不需要 nvm）
@@ -336,11 +342,11 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 
 相依層 —— 上面的項目會自動帶進來，很少需要自己點：
 
-  · base         claude / uv / rustup 的 installer 相依（清單見 base.yml）
+  · base         claude / codex / uv / rustup 的 installer 相依（清單見 base.yml）
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    base build-tools claude codex ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
 ```
 
 `gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支
@@ -473,6 +479,7 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `node.yml`（`/usr/local/node/bin`） | `node` `npm` `npx` `corepack` |
 | `go.yml`（`/usr/local/go/bin`） | `go` `gofmt` |
 | `claude.yml`（`~/.local/bin`） | `claude` |
+| `codex.yml`（`~/.local/bin`） | `codex` |
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
 | `rust.yml`（`~/.cargo/bin`） | `cargo` `rustc` `rustdoc` `rustfmt` `rustup` |
 
@@ -490,7 +497,7 @@ apt 裝的（podman、lazygit、glab、gh、unzip、git-lfs、ffmpeg、base、bu
 `~/.cargo/bin` 找子命令），在只有 `/usr/bin:/bin:/usr/local/bin` 的 `env -i` 與
 `wsl -d dev -e` 下都實測通過。
 
-`claude` / `uv` / `rust` 那三列有個 go / node 沒有的但書：目標在 `$HOME` 底下，所以這支 root
+`claude` / `codex` / `uv` / `rust` 那四列有個 go / node 沒有的但書：目標在 `$HOME` 底下，所以這支 root
 擁有的 symlink 綁死了一個使用者。這個 role 本來就是「一台機器供一個開發者」的模型
 （`~/.profile`、`~/.claude`、rootless podman 都只服務一個 uid），所以可以這樣做；同機
 真的要跑第二個使用者時要知道那會是後寫的贏，細節見 CLAUDE.md。

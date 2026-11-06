@@ -35,6 +35,11 @@
       dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
       desc: Claude Code —— 這個 repo 的存在理由
+    - tag: codex
+      dep: false
+      path: "{{ ansible_facts.env.HOME }}/.local/bin/codex"
+      version: --version
+      desc: Codex CLI {{ codex_version }}（官方獨立安裝程式，釘版本；裝完要自己 codex login）
     - tag: go
       dep: false
       path: /usr/local/go/bin/go
@@ -104,7 +109,7 @@
     - tag: base
       dep: true
       path: /usr/bin/jq
-      desc: claude / uv / rustup 的 installer 相依（清單見 base.yml）
+      desc: claude / codex / uv / rustup 的 installer 相依（清單見 base.yml）
     - tag: build-tools
       dep: true
       path: /usr/bin/gcc
@@ -160,7 +165,7 @@
       相依是自動的：TAGS=python 會把 base 與 build-tools 一起帶進來，任何會影響 PATH
       的項目也都會順便更新 ~/.profile —— 不必自己列。
 
-      移除只支援 tarball / installer 裝的項目（claude / go / python / node / rust / gha-runner）——
+      移除只支援 tarball / installer 裝的項目（claude / codex / go / python / node / rust / gha-runner）——
       那幾個是這個 role 獨佔一整個目錄的，刪掉不牽動別的東西。apt 裝的（podman /
       playwright / lazygit / glab / gh / git-lfs / ffmpeg / fonts-cjk / unzip / base / build-tools）要手動，
       `make uninstall TAGS=<那些>` 會印出該怎麼做與為什麼。加 DATA=1 可以連快取 / 模組一起清。

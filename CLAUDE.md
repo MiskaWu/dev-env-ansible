@@ -13,7 +13,7 @@
   ansible 本身，歸 Makefile 的 `make init`。**每一個 import 都必須有自己的 tag**——
   **包含 Go**（2026-07 之前它是無條件必裝，那是分層畫錯）。
   `base.yml` 那四個 apt 套件（`ca-certificates` / `curl` / `git` / `jq`）**不是「基本
-  必裝」，是別人的相依**：掛 `[base, claude, python, rust]`，因為 `claude.yml`、`python.yml`、
+  必裝」，是別人的相依**：掛 `[base, claude, codex, python, rust]`，因為 `claude.yml`、`codex.yml`、`python.yml`、
   `rust.yml` 都是 `curl … | sh` 跑官方 installer。要往那裡加東西只問一句：**某個 installer 的必經
   路徑上真的用得到它嗎？**「好用」不是理由。
   **`jq` 是唯一通過這關的「小工具」（2026-07-27 從選裝升上來）**，靠的不是好用，是
@@ -58,7 +58,7 @@
   「這次只跑這段」）。既然定位是「Claude 環境 + 其他用到時再裝」，那就是純命令式，宣告式
   那層是多餘的。使用者端入口只有一個指令：**`make install TAGS=<項目>`，不帶 TAGS 就是
   全裝**（= 不帶 `--tags`，跟底層 ansible 一對一，**刻意沒有隱藏的預設值**）。
-  **相依關係也用 tag 表達** —— `base.yml` 掛 `[base, claude, python, rust]`、`build-tools.yml`
+  **相依關係也用 tag 表達** —— `base.yml` 掛 `[base, claude, codex, python, rust]`、`build-tools.yml`
   掛 `[build-tools, go, python, rust]`，於是 `--tags python` / `--tags rust` 自動把兩者都帶進來
   （`--list-tasks` 實測確認）。比舊的
   `install_build_tools: "{{ install_go or install_python }}"` 好在：多一個需要編譯器的東西
@@ -544,6 +544,27 @@
     `https://cli.github.com/packages stable/main`（universe 的 2.46.0-4 仍在候選表，版本較低
     不會被選）；`gh auth status` 回 "You are not logged into any GitHub hosts"；
     `apt-get -s purge --autoremove gh` 只拔 gh 一個。
+- **`TAGS=codex`（2026-11-06 加）：Codex CLI，走官方獨立安裝程式，掛 `[codex]`。** 為「Claude 透過
+  `codex exec` 用 ChatGPT 額度生圖」加的，底層規定只能是官方執行檔。形狀跟 claude 一樣：
+  `curl … | sh` 裝進 `~/.local/bin`，入口 symlink 進 `/usr/local/bin`。查到的東西：
+  - **不走 npm**：要多掛 `node`，而且 `/usr/local/node` 是 root 的，一般使用者 `npm i -g` 會失敗。
+    **體積不是理由**：0.167.0 實測 npm 版 438MB、獨立安裝 516MB，後者反而大。
+  - **釘版本（`codex_version`），不追 latest**：生圖流程的驗證結果綁定版本，升版要重測。判斷要不要裝看
+    `codex --version`，不用 `creates:`，否則改了版本號也不會升級（同 node.yml）。釘版時 installer 不留
+    `auto-update-version`（實測沒有這個檔）。
+  - **`PATH` 那個環境變數不是雜訊**：`install.sh` 的 `add_to_path` 發現 `~/.local/bin` 不在 PATH 上，就往
+    `~/.bashrc` 加自己的區塊，違反「`~/.profile` 只有一個 managed block」。它沒有 `--no-modify-path`
+    這種開關，所以 task 先把目錄放進 PATH，讓它走「已經在 PATH 上」那條路。
+    另外 `CODEX_NON_INTERACTIVE=1` 擋掉結尾的「Start Codex now?」，不然有 tty 時 ansible 會卡住。
+  - **base 的證據**：`install.sh` 的 `download_file()` 先找 curl（沒有才退 wget），task 本身也是 curl。
+  - **反安裝**：`~/.codex` 跟 `~/.cargo` 同一種混住，但切得更單純：`packages/standalone` 整包是工具，其餘
+    （`auth.json`、`sessions`、`config.toml`、`generated_images`）是使用者的資料，`DATA=1` 也不動。
+  - **認證不在這裡做**（同 glab / gh）：`codex login` 要瀏覽器，也有 `--device-auth`。
+  - **實測（本機套用）**：`make install TAGS=codex && make install TAGS=codex && make uninstall TAGS=codex &&
+    make install TAGS=codex` exit 0，最後一次 changed=2（移除確實生效才會有變動）；裝好後 `make check
+    TAGS=codex` changed=0。`env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/local/bin` 下 `codex --version` 回
+    0.167.0，`readlink -f` 解到 `releases/0.167.0-x86_64-unknown-linux-musl/bin/codex`。`~/.bashrc`、
+    `~/.profile` 沒有 installer 區塊。移除時保留資料這點**沒有實測**：跑的時候還沒登入，`~/.codex` 沒有資料。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：
@@ -563,7 +584,7 @@
   - **`install` 不可以把任何 `--tags` 寫死。** 不帶 `TAGS` 就是不帶 `--tags`（＝全裝），
     跟底層 ansible 一對一。2026-07-28 有一版寫死 `--tags core`，結果 `make install TAGS=go`
     靜默裝成 core —— 隱藏的預設值就是這樣咬人的。
-  - **`profile` 不必自己補**：它掛在 `[profile, claude, go, python, node, rust, podman]` 上，任何會
+  - **`profile` 不必自己補**：它掛在 `[profile, claude, codex, go, python, node, rust, podman]` 上，任何會
     影響 PATH 的項目都會帶到它（舊設計得記得寫 `TAGS=go,profile`）。仍然刻意**不用**
     `always` —— 那會讓 `make facts` 從唯讀變成會改 `~/.profile`。
 - **指令介面只有 `make install TAGS=…`，不要再引入 `install-<項目>` 那種 target。**

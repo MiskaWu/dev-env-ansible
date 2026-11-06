@@ -1,10 +1,10 @@
 ---
-# 基礎 apt 套件 —— **這是別人的相依，不是「基本必裝」**。它掛在 `[base, claude, python,
+# 基礎 apt 套件 —— **這是別人的相依，不是「基本必裝」**。它掛在 `[base, claude, codex, python,
 # rust]` 底下（見 main.yml），所以 `make install TAGS=claude` 會自動把它帶進來，跟
 # build-tools 被 go / python / rust 帶進來是完全一樣的手法。
 #
-# 為什麼是這四個 tag：`claude.yml`、`python.yml`、`rust.yml` 都是 `curl … | sh` 跑官方
-# installer，三者都要 `curl` + `ca-certificates`；`jq` 只有 Claude 的 installer 用得到（見下）。
+# 為什麼是這五個 tag：`claude.yml`、`codex.yml`、`python.yml`、`rust.yml` 都是 `curl … | sh` 跑官方
+# installer，四者都要 `curl` + `ca-certificates`；`jq` 只有 Claude 的 installer 用得到（見下）。
 # rustup 那條的證據：task 本身就是 `curl … https://sh.rustup.rs | sh`，而 rustup-init.sh 的
 # `downloader()` 也是先找 curl（沒有才退 wget）去抓真正的 rustup-init 二進位。
 # `go.yml` 走 ansible 的 `get_url`（Python 端發 HTTPS，不呼叫 curl 二進位），所以沒掛 go。

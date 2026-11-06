@@ -12,7 +12,7 @@
 # 任何地方記著「這台有 Go」。偵測讓兩次都產出正確的 .profile。
 #
 # 順序上安全：main.yml 把 profile.yml 放最後，所以同一次 run 裡 go.yml 已經裝完才輪到
-# 這裡 stat。而 profile 的 tag 掛在 [claude, go, python, node, rust, podman] 上，只要裝了
+# 這裡 stat。而 profile 的 tag 掛在 [claude, codex, go, python, node, rust, podman] 上，只要裝了
 # 會影響 PATH 的東西就一定會跟著跑（舊設計要自己記得 `TAGS=go,profile`，那個坑消失了）。
 #
 # check mode 的已知落差：`--check` 不會真的裝 Go，所以在還沒有 Go 的機器上乾跑，diff
