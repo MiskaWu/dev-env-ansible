@@ -1,0 +1,9 @@
+---
+# oras —— 把檔案推到 OCI 倉庫的工具。platform 用它把部署設定推到 ECR，讓 AWS 上的 ArgoCD 讀。
+# 走 apt（universe 的版本夠用）。不是任何東西的相依，要推設定才裝。
+- name: Install oras
+  become: true
+  ansible.builtin.apt:
+    name: oras
+    update_cache: true
+    cache_valid_time: 3600

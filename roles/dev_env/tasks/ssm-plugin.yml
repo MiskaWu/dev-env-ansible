@@ -1,0 +1,31 @@
+---
+# session-manager-plugin —— 本機用 AWS CLI 連 EC2 的 Session Manager 時要有的外掛
+# （aws ssm start-session、Ansible 的 amazon.aws.aws_ssm 連線都靠它）。
+#
+# 官方沒有 apt 套件庫，只有 .deb 直連，所以釘版本、核對 SHA-256（defaults 的 ssm_plugin_*）。
+# 雜湊是 2026-11-09 從官方位址下載後算的，AWS 沒有公布雜湊。換版就改那三行，apt 看到版本不同會升級。
+# 裝完執行檔在 /usr/local/sessionmanagerplugin，入口在 /usr/local/bin，已經在預設 PATH 上。
+#
+# 不是任何東西的相依，要用 SSM 連 EC2 才裝。不掛 base：下載用 get_url、安裝用 apt。
+- name: Ensure download cache exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.cache"
+    state: directory
+    mode: "0755"
+
+# 官方的目錄拼法是 ubuntu_64bit / ubuntu_arm64，別拿 detect.yml 的 amd64 直接套。
+- name: Download session-manager-plugin
+  ansible.builtin.get_url:
+    url: >-
+      https://s3.amazonaws.com/session-manager-downloads/plugin/{{ ssm_plugin_version }}/ubuntu_{{
+      'arm64' if dev_env_arch == 'arm64' else '64bit' }}/session-manager-plugin.deb
+    dest: "{{ ansible_facts.env.HOME }}/.cache/session-manager-plugin-{{ ssm_plugin_version }}-{{ dev_env_arch }}.deb"
+    checksum: "sha256:{{ ssm_plugin_sha256[dev_env_arch] }}"
+    mode: "0644"
+
+# 乾跑時 get_url 不會真的下載，apt 找不到檔案會失敗，所以乾跑跳過這一步。
+- name: Install session-manager-plugin
+  become: true
+  ansible.builtin.apt:
+    deb: "{{ ansible_facts.env.HOME }}/.cache/session-manager-plugin-{{ ssm_plugin_version }}-{{ dev_env_arch }}.deb"
+  when: not ansible_check_mode

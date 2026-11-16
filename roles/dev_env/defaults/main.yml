@@ -51,6 +51,11 @@ codex_version: "0.167.0"
 # 這裡只決定**第一次解開**哪一版：runner 之後會自己更新（GitHub 要求時下載新版、換掉自己的
 # bin/），已經註冊的那幾份不會因為改了這裡就換版。換版就改這三行，`make install TAGS=gha-runner`，
 # 之後新加的 repo 用新版。
+ssm_plugin_version: "1.2.896.0"
+ssm_plugin_sha256:
+  amd64: 53f51fcc67314a4bf85888a38a3967cd41f8d0f28a60a9469a63acf935ba713e
+  arm64: 914eeca87b18b55356c58be197080f73742b3ca60d3823f0a45670dc9056aa9c
+
 gha_runner_version: "2.338.0"
 gha_runner_sha256:
   x64: af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32

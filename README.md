@@ -77,7 +77,7 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、`~/.codex/packages/standalone`、
 `~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
-**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `fonts-cjk` / `unzip` /
+**apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `fonts-cjk` / `unzip` / `ssm-plugin` / `ansible-aws` / `oras` /
 `base` / `build-tools`）要手動**，指令會擋下來並告訴你怎麼做。理由不是懶：apt 套件是共同
 持有的，移除的連帶結果**取決於這台機器現在還裝了什麼** —— 例如 purge `tmux` 會把 `byobu`
 與 `ubuntu-wsl` metapackage 一起帶走。同一個指令在兩台機器上結果不同，這種決定沒辦法替你做：
@@ -210,6 +210,9 @@ dev-env-ansible/
         ├── git-lfs.yml         # git-lfs                    (tags: [tools, git-lfs])
         ├── ffmpeg.yml          # ffmpeg（合成 MP4）          (tags: [tools, ffmpeg])
         ├── fonts-cjk.yml       # Noto Sans CJK（分地區字形）  (tags: [tools, fonts-cjk])
+        ├── ssm-plugin.yml      # AWS Session Manager 外掛（官方 .deb，釘版本）  (tags: [tools, ssm-plugin])
+        ├── ansible-aws.yml     # boto3、netaddr（Ansible 操作 AWS）  (tags: [tools, ansible-aws])
+        ├── oras.yml            # oras（推到 OCI 倉庫）        (tags: [tools, oras])
         ├── go.yml              # Go binary（目標版本已在就跳過）      (tags: go)
         ├── python.yml          # uv                                   (tags: python)
         ├── node.yml            # Node 官方 tarball → /usr/local/node   (tags: node)
@@ -333,6 +336,9 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · podman       rootless Podman + DOCKER_HOST（firewall driver: iptables）
   · gha-runner   GitHub Actions 自架 runner 2.338.0（私人 repo 的 CI 跑這台；註冊用 gha-runner add ORG 或 OWNER/REPO）
   · lazygit      lazygit（git 的 TUI）
+  · ssm-plugin   AWS Session Manager 外掛 1.2.896.0（用 SSM 連 EC2：aws ssm start-session、Ansible 的 aws_ssm）
+  · ansible-aws  boto3 與 netaddr（Ansible 操作 AWS 時控制端要的 Python 套件）
+  · oras         oras（把檔案推到 OCI 倉庫；platform 用它把部署設定推到 ECR）
   · glab         glab（GitLab CLI；工作管理的 issue／MR 走它，裝完要自己 glab auth login）
   · gh           gh（GitHub CLI 官方套件庫 —— Ubuntu 的 2.46 已壞；裝完要自己 gh auth login）
   · git-lfs      git-lfs（沒裝不會報錯 —— clone 拿到的是 pointer，commit 會把大檔直接塞進 git）
@@ -346,7 +352,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    base build-tools claude codex ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node playwright podman profile python rust tools unzip
+    ansible-aws base build-tools claude codex ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node oras playwright podman profile python rust ssm-plugin tools unzip
 ```
 
 `gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支
@@ -483,7 +489,7 @@ Node 時，`npm` 會解析到 `/mnt/c/Program Files/nodejs/npm`（**Windows 版*
 | `python.yml`（`~/.local/bin`） | `uv` `uvx` |
 | `rust.yml`（`~/.cargo/bin`） | `cargo` `rustc` `rustdoc` `rustfmt` `rustup` |
 
-apt 裝的（podman、lazygit、glab、gh、unzip、git-lfs、ffmpeg、base、build-tools、playwright 的
+apt 裝的（podman、lazygit、ssm-plugin、ansible-aws、oras、glab、gh、unzip、git-lfs、ffmpeg、base、build-tools、playwright 的
 `.so`）本來就在 `/usr/bin`，不需要處理。
 
 兩個機制互補，都需要：symlink 管固定入口，`.profile` 的 PATH 管**裝完之後才長出來**的

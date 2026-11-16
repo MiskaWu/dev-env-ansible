@@ -77,6 +77,21 @@
   ansible.builtin.import_tasks: lazygit.yml
   tags: [tools, lazygit]
 
+# AWS 的 Session Manager 外掛：用 SSM 連 EC2 才需要，不是任何東西的相依。
+- name: ssm-plugin
+  ansible.builtin.import_tasks: ssm-plugin.yml
+  tags: [tools, ssm-plugin]
+
+# Ansible 操作 AWS 時控制端要的 Python 套件，不是任何東西的相依。
+- name: ansible-aws
+  ansible.builtin.import_tasks: ansible-aws.yml
+  tags: [tools, ansible-aws]
+
+# 把檔案推到 OCI 倉庫，不是任何東西的相依。
+- name: oras
+  ansible.builtin.import_tasks: oras.yml
+  tags: [tools, oras]
+
 # 不掛 base —— apt 的 git-lfs 自己 Depends: git，前置交給 apt 就夠（理由見檔頭）。
 # 也不需要第二個 task 去跑 `git lfs install`：套件的 postinst 已經寫好 /etc/gitconfig。
 - name: git-lfs

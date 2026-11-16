@@ -565,6 +565,11 @@
     TAGS=codex` changed=0。`env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/local/bin` 下 `codex --version` 回
     0.167.0，`readlink -f` 解到 `releases/0.167.0-x86_64-unknown-linux-musl/bin/codex`。`~/.bashrc`、
     `~/.profile` 沒有 installer 區塊。移除時保留資料這點**沒有實測**：跑的時候還沒登入，`~/.codex` 沒有資料。
+- **`ssm-plugin`（2026-11-09）是 AWS Session Manager 的本機外掛**，platform 的 Ansible（`amazon.aws.aws_ssm`）與 `aws ssm start-session` 要用。
+  官方沒有 apt 套件庫，只有 .deb 直連，所以釘版本、核對 SHA-256，雜湊是下載後自己算的（AWS 沒公布）。
+  走 `apt: deb:` 而不是解開放進 `~/.local`：套件自己會建 `/usr/local/bin` 的入口，移除也歸 dpkg 管，跟其他 apt 項目一樣手動 purge。
+  乾跑時 `get_url` 不下載，所以 apt 那步要 `when: not ansible_check_mode`。
+  **移除後要多刪一條 symlink**：套件的 postrm 用 `[ -f … ]` 判斷，那時目標已被刪掉，失效的 symlink 判定為不存在，`/usr/local/bin/session-manager-plugin` 會留下來（2026-11-09 實測）。`sudo apt purge` 之後要再 `sudo rm -f` 這條。
 - **「可以裝什麼」的清單從 playbook 投影出來，不要手抄。** 2026-07 之前那份清單同時
   存在三個地方（Makefile 的 `TAGS` 註解、README、真正的 `tasks/main.yml`），而只有第三個
   是真的 —— `clients` 那個 tag 隨 `clients.yml` 移除後，前兩份還掛著它。現在的分工：

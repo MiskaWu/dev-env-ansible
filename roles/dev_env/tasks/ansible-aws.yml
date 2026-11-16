@@ -1,0 +1,13 @@
+---
+# Ansible 操作 AWS 機器時，控制端要有的 Python 套件：
+#   - boto3：amazon.aws 的 inventory 外掛和 aws_ssm 連線都靠它
+#   - netaddr：k3s-ansible 的 ansible.utils.ipwrap 要用
+# 走 apt，裝給 ansible 用的系統 Python。不是任何東西的相依，要用 Ansible 管 AWS 才裝。
+- name: Install Ansible AWS dependencies
+  become: true
+  ansible.builtin.apt:
+    name:
+      - python3-boto3
+      - python3-netaddr
+    update_cache: true
+    cache_valid_time: 3600
