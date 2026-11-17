@@ -1,0 +1,41 @@
+---
+# /etc/claude-code/CLAUDE.md：Claude Code 的整台電腦層規則（官方叫 managed policy 的 CLAUDE.md）。
+# 每場對話都會載入、排在個人層之前，而且一般使用者改不動。只寫「這台才成立」的細節：
+# IaC repo 在哪、工作區在哪、容器怎麼開。通則（工具怎麼裝、版本怎麼管）在個人層的規則，不重寫。
+#
+# ---- 只擁有這一個檔，不擁有目錄 ---------------------------------------------
+# /etc/claude-code/ 底下還有別人放的東西：claude-config 的 `make link-machine` 接的
+# managed-settings.d/claude-config.json、使用者手放的 managed-settings.d/company.json。
+# 所以目錄只「確保存在」、不設 recurse，移除時也只刪 CLAUDE.md（見 uninstall.yml）。
+#
+# ---- root 擁有、0644 ---------------------------------------------------------
+# 規則檔如果 agent 寫得到，這層就等於不存在（同 push-guard 讀的 git config 那條道理）。
+# root 擁有讓 agent 只讀得到、改不動；要改就改 repo 裡的範本再重跑，改動留在 git 歷史裡。
+#
+# ---- 內容是偵測出來的 --------------------------------------------------------
+# 容器那段只在 podman 已經裝了才寫。所以裝或移除 podman 之後，要重跑一次
+# `make install TAGS=claude-rules`。刻意**不**把這個 tag 掛到 podman 底下：那會讓
+# `TAGS=podman` 順手生出一個沒點名的 /etc 檔，違反「沒有無條件裝的東西」。
+- name: 偵測 podman（決定要不要寫容器那段）
+  ansible.builtin.stat:
+    path: /usr/bin/podman
+  register: _claude_rules_podman
+  check_mode: false
+
+- name: 確保 /etc/claude-code 存在
+  become: true
+  ansible.builtin.file:
+    path: /etc/claude-code
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: 寫入整台電腦層規則（/etc/claude-code/CLAUDE.md）
+  become: true
+  ansible.builtin.template:
+    src: claude-rules.md.j2
+    dest: /etc/claude-code/CLAUDE.md
+    owner: root
+    group: root
+    mode: "0644"

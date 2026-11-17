@@ -51,6 +51,13 @@
   ansible.builtin.import_tasks: claude.yml
   tags: [claude]
 
+# 整台電腦層規則 /etc/claude-code/CLAUDE.md（理由見 claude-rules.yml 檔頭）。
+# 不掛 base —— template 不呼叫任何外部指令。也不掛到 claude 底下：規則寫的是「這台的事實」，
+# 不是 Claude 的安裝相依，`TAGS=claude` 不該順手寫 /etc。
+- name: Claude Code 整台電腦層規則
+  ansible.builtin.import_tasks: claude-rules.yml
+  tags: [claude-rules]
+
 # 官方獨立安裝程式裝到 ~/.local/bin，釘版本（理由見 codex.yml 檔頭）。
 # 相依掛在上面的 base（installer 要 curl）；不掛 node —— 獨立安裝不需要 Node。
 - name: Codex CLI

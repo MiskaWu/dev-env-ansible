@@ -73,9 +73,9 @@ make uninstall                   # 拒絕執行 —— 這個指令沒有「全�
 **必須點名要移除什麼。** 這是跟 `install` 最重要的不對稱：`make install` 不帶 `TAGS`
 是「全裝」，`make uninstall` 不帶 `TAGS` 是**拒絕**。沒有人該靠少打幾個字就把機器清空。
 
-**只支援這個 role 獨佔擁有的項目**（`claude` / `codex` / `go` / `python` / `node` / `rust` / `gha-runner`）。分界線是
+**只支援這個 role 獨佔擁有的項目**（`claude` / `claude-rules` / `codex` / `go` / `python` / `node` / `rust` / `gha-runner`）。分界線是
 **所有權**，不是難易度：`/usr/local/go`、`/usr/local/node`、`~/.local/share/claude`、`~/.codex/packages/standalone`、
-`~/.local/bin/uv`、`~/.rustup` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
+`~/.local/bin/uv`、`~/.rustup`、`/etc/claude-code/CLAUDE.md` 這幾個整包是我們放的，刪掉不牽動任何別的東西。
 
 **apt 裝的（`podman` / `playwright` / `lazygit` / `glab` / `gh` / `git-lfs` / `ffmpeg` / `fonts-cjk` / `unzip` / `ssm-plugin` / `ansible-aws` / `oras` /
 `base` / `build-tools`）要手動**，指令會擋下來並告訴你怎麼做。理由不是懶：apt 套件是共同
@@ -195,13 +195,14 @@ dev-env-ansible/
 ├── inventory/hosts.yml         # 管理的 host
 └── roles/dev_env/
     ├── defaults/main.yml       # 只剩「怎麼裝」的參數（go_version、node_version、codex_version、gha_runner_*、firewall driver）
-    ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in、gh 的 apt 來源
+    ├── templates/              # containers 設定 drop-in、systemd unit、ssh drop-in、gh 的 apt 來源、整台電腦層規則
     └── tasks/
         ├── detect.yml          # 設定 is_wsl / dev_env_arch fact      (tags: always)
         ├── list.yml            # `make list` 的輸出                   (tags: [list, never])
         ├── base.yml            # curl/jq/git/ca-certs  (tags: [base, claude, codex, python, rust])
         ├── build-tools.yml     # build-essential   (tags: [build-tools, go, python, rust])
         ├── claude.yml          # Claude Code（native installer）      (tags: claude)
+        ├── claude-rules.yml    # 整台電腦層規則 /etc/claude-code/CLAUDE.md  (tags: claude-rules)
         ├── codex.yml           # Codex CLI（官方獨立安裝程式，釘版本）  (tags: codex)
         ├── unzip.yml           # unzip                        (tags: [tools, unzip])
         ├── lazygit.yml         # lazygit（git 的 TUI）      (tags: [tools, lazygit])
@@ -327,6 +328,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
 
   · claude       Claude Code —— 這個 repo 的存在理由
+  · claude-rules Claude Code 整台電腦層規則（IaC repo、工作區、容器；裝或移除 podman 後重跑）
   · codex        Codex CLI 0.167.0（官方獨立安裝程式，釘版本；裝完要自己 codex login）
   · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
   · python       uv（自己也管 Python 版本，所以不需要 pyenv）
@@ -352,7 +354,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
   · build-tools  build-essential —— Go cgo / uv C extension / rustc linker 的前置
 
 可用的 tag（直接跟 playbook 要的，不是手抄）：
-    ansible-aws base build-tools claude codex ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node oras playwright podman profile python rust ssm-plugin tools unzip
+    ansible-aws base build-tools claude claude-rules codex ffmpeg fonts-cjk gh gha-runner git-lfs glab go lazygit list node oras playwright podman profile python rust ssm-plugin tools unzip
 ```
 
 `gh` 裝了的話，那列底下會多印一行 `gh --version` —— 官方套件庫的新版與 Ubuntu universe 那支

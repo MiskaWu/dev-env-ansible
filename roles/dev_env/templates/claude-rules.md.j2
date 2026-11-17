@@ -1,0 +1,34 @@
+# 這台電腦
+
+由 dev-env-ansible 的 `make install TAGS=claude-rules` 產生，不要直接改這個檔：
+改 `{{ playbook_dir }}/roles/dev_env/templates/claude-rules.md.j2` 再重跑。
+通則（工具怎麼裝、版本怎麼管、容器優先 podman）在個人層的規則；這裡只寫這台才成立的細節。
+
+## 環境
+
+{% if is_wsl %}
+- Windows 上的 WSL2（{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}，systemd 已開）。Windows 的磁碟在 `/mnt/c`。
+{% else %}
+- {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}。
+{% endif %}
+- 要 sudo 的步驟不自己跑：把完整指令給使用者，由他自己輸入密碼執行。
+
+## 工作區
+
+- 專案一律放在 `{{ ansible_facts.env.HOME }}/projects/<名字>`。Claude 的記憶照啟動目錄分，放在別處的專案接不上記憶。
+
+## 裝工具
+
+- 這台的 IaC repo 是 `{{ playbook_dir }}`。
+- 先跑 `make list`，看有沒有現成的項目、這台已經裝了哪些。
+- 有現成的項目就用 `make install TAGS=<項目>`。它會用到 sudo，照上面的做法交給使用者跑。
+- 沒有就先在 repo 加一個項目（照該 repo CLAUDE.md 的「加東西的規矩」，能裝也能移除），使用者看過再裝。
+- 移除用 `make uninstall TAGS=<項目>`。apt 裝的項目沒有自動移除，先用 `apt-get -s purge --autoremove <套件>` 看影響範圍。
+{% if _claude_rules_podman.stat.exists %}
+
+## 容器
+
+- 容器用 rootless podman，指令是 `podman`；這台沒有 Docker Desktop。
+- 要 Docker API 的工具（testcontainers、IDE）走 `~/.profile` 設的 `DOCKER_HOST`，它指向 podman 的 socket。
+- 臨時用的工具與資料庫 client 用 `podman run --rm`，不裝到主機上。
+{% endif %}

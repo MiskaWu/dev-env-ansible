@@ -158,6 +158,23 @@
           - path: "{{ ansible_facts.env.HOME }}/.claude"
             what: 設定、專案紀錄、hooks、memory —— 你的資料，DATA=1 也不會動
 
+# ---- Claude Code 整台電腦層規則 ----------------------------------------------
+# 只刪 CLAUDE.md 這一個檔。/etc/claude-code/ 目錄與 managed-settings.d/ 底下的東西不是
+# 這個 role 放的（claude-config 的 make link-machine、使用者手放的 company.json），不碰；
+# 目錄就算空了也留著 —— 刪掉它省不到什麼，卻可能讓別人下次接線時以為這台沒設過。
+- name: Claude Code 整台電腦層規則
+  tags: [claude-rules]
+  block:
+    - name: 移除 /etc/claude-code/CLAUDE.md
+      become: true
+      ansible.builtin.file:
+        path: /etc/claude-code/CLAUDE.md
+        state: absent
+
+    - name: Claude Code 整台電腦層規則 —— 登記
+      ansible.builtin.set_fact:
+        _uninstall_done: "{{ _uninstall_done + ['claude-rules'] }}"
+
 # ---- Codex CLI ---------------------------------------------------------------
 # ~/.codex 跟 ~/.cargo 同一種「混住」，但這棵切法更單純：packages/standalone 整包是官方
 # installer 放的工具本體，其餘（auth.json 登入憑證、sessions 對話紀錄、config.toml、

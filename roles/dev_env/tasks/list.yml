@@ -35,6 +35,10 @@
       dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/claude"
       desc: Claude Code —— 這個 repo 的存在理由
+    - tag: claude-rules
+      dep: false
+      path: /etc/claude-code/CLAUDE.md
+      desc: Claude Code 整台電腦層規則（IaC repo、工作區、容器；裝或移除 podman 後重跑）
     - tag: codex
       dep: false
       path: "{{ ansible_facts.env.HOME }}/.local/bin/codex"
