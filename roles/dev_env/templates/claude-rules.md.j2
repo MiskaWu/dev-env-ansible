@@ -16,6 +16,16 @@
 ## 工作區
 
 - 專案一律放在 `{{ ansible_facts.env.HOME }}/projects/<名字>`。Claude 的記憶照啟動目錄分，放在別處的專案接不上記憶。
+- 記憶資料夾多半是 symlink，實體在某個 repo 裡。寫完或改完記憶，不用等使用者就 commit 並推，
+  只收自己這個記憶資料夾（別的對話的記憶由它們自己收）：
+
+  ```bash
+  cd <記憶資料夾>
+  git add -A . && git commit -m "docs(memory): <記了什麼>" -- .
+  git pull --rebase --autostash origin main && git push origin main
+  ```
+
+  記憶資料夾不在 repo 裡（`git rev-parse` 失敗）就不用收；那個 repo 的 CLAUDE.md 另有寫法時照它的。
 
 ## 裝工具
 

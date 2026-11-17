@@ -328,7 +328,7 @@ make list     # 每一項怎麼叫、這台機器已經有哪些、可用的 tag
 可安裝的項目（✓ 這台機器上已經有 / · 還沒裝）
 
   · claude       Claude Code —— 這個 repo 的存在理由
-  · claude-rules Claude Code 整台電腦層規則（IaC repo、工作區、容器；裝或移除 podman 後重跑）
+  · claude-rules Claude Code 整台電腦層規則（IaC repo、工作區與記憶、容器；裝或移除 podman 後重跑）
   · codex        Codex CLI 0.167.0（官方獨立安裝程式，釘版本；裝完要自己 codex login）
   · go           Go latest（GOTOOLCHAIN=auto 管專案版本，不需要版本管理器）
   · python       uv（自己也管 Python 版本，所以不需要 pyenv）
